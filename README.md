@@ -76,6 +76,8 @@ The allowlist currently includes common document-compute modules such as:
 
 `table(rows)` is also available inside `::py` blocks. When a block calls it with a list of dictionaries, the corresponding `::table` renderer can display those structured rows directly.
 
+`::note` directives can resolve a section from a local `.md`, `.folio`, or `.txt` file. If `path="..."` is omitted, Folio will try to resolve the note id as a document-relative file name.
+
 The bottom status pane surfaces:
 
 - autorun completion

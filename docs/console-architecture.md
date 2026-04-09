@@ -307,10 +307,8 @@ Status key:
 - `done` `::task`
 - `done` `::py`
 - `done` `::table`
-- `partial` `::note`
-  Current renderer is still a placeholder, not real section transclusion.
-- `partial` `::file`
-  Current renderer is still a placeholder, not a true preview or directory listing.
+- `done` `::note`
+- `done` `::file`
 
 ### Minimal Runtime Architecture
 
@@ -340,8 +338,8 @@ Status key:
 - `done` `renderers/TaskRenderer.py`
 - `done` `renderers/PyRenderer.py`
 - `done` `renderers/TableRenderer.py`
-- `partial` `renderers/NoteRenderer.py`
-- `partial` `renderers/FileRenderer.py`
+- `done` `renderers/NoteRenderer.py`
+- `done` `renderers/FileRenderer.py`
 - `done` `python/PyWorker.py`
 
 ### Responsibilities
@@ -447,15 +445,15 @@ Status key:
 
 #### `::note`
 
-- `not started` resolve section from another file
-- `partial` inline rendering
-  Inline placeholder widget exists.
+- `done` resolve section from another file
+- `done` inline rendering
+- `done` document-relative note source resolution
 
 #### `::file`
 
-- `not started` real local file preview
-- `not started` real directory listing
-- `partial` placeholder widget exists
+- `done` real local file preview
+- `done` real directory listing
+- `done` document-relative path resolution
 
 ### Why A Console Renderer Is Viable
 

@@ -52,9 +52,32 @@ class FolioApp(App[None]):
     .task-title {
       width: 1fr;
     }
+    .task-widget {
+      height: auto;
+      border: round $surface-lighten-1;
+      padding: 1;
+      margin-bottom: 1;
+    }
+    .task-header {
+      height: auto;
+    }
+    .task-checkbox {
+      width: 5;
+      min-width: 5;
+      margin-right: 1;
+    }
     .task-due {
       color: $text-muted;
       width: 16;
+    }
+    .task-meta {
+      color: $text-muted;
+      height: auto;
+      margin-top: 1;
+    }
+    .task-notes {
+      height: auto;
+      margin-top: 1;
     }
     .status-line {
       color: $text-muted;
@@ -99,6 +122,34 @@ class FolioApp(App[None]):
     #table-apply {
       width: 10;
       margin-left: 1;
+    }
+    .file-widget {
+      height: auto;
+      border: round $surface-lighten-1;
+      padding: 1;
+      margin-bottom: 1;
+    }
+    .file-meta {
+      color: $text-muted;
+      height: auto;
+      margin-bottom: 1;
+    }
+    .file-content {
+      height: auto;
+    }
+    .note-widget {
+      height: auto;
+      border: round $surface-lighten-1;
+      padding: 1;
+      margin-bottom: 1;
+    }
+    .note-meta, .note-status {
+      color: $text-muted;
+      height: auto;
+      margin-bottom: 1;
+    }
+    .note-content {
+      height: auto;
     }
     Button {
       min-width: 10;
@@ -186,6 +237,8 @@ class FolioApp(App[None]):
             run_py=self.run_py_block,
             update_table=self.update_table_directive,
             py_results=self.py_results,
+            document_path=self.document_path,
+            directives_by_id={item.id: item for item in model.directives if item.id},
         )
         prose_index = 0
         directives = iter(model.directives)
@@ -266,6 +319,8 @@ class FolioApp(App[None]):
             run_py=self.run_py_block,
             update_table=self.update_table_directive,
             py_results=self.py_results,
+            document_path=self.document_path,
+            directives_by_id={item.id: item for item in model.directives if item.id},
         )
         prose_index = 0
         directives = iter(model.directives)

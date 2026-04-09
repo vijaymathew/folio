@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable, Protocol
 
 from textual.widget import Widget
@@ -14,6 +15,8 @@ class RenderContext:
     run_py: Callable[[Directive], None] | None = None
     update_table: Callable[[Directive, list[dict[str, object]]], None] | None = None
     py_results: dict[str, PyBlockResult] | None = None
+    document_path: Path | None = None
+    directives_by_id: dict[str, Directive] | None = None
 
 
 class Renderer(Protocol):

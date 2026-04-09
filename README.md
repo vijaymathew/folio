@@ -26,6 +26,7 @@ folio docs/example.folio
 
 - `q`: quit
 - `r`: reload document from disk
+- edit the source pane directly, then press `Ctrl+S` to save, reparse, and rerender
 - click `Toggle` on a task to write a text mutation back to the source file
 - click `Run` on a `::py` block to execute document-scoped Python in a subprocess worker
 
@@ -80,5 +81,6 @@ The bottom status pane surfaces:
 - autorun completion
 - manual worker runs
 - safety policy failures
+- source buffer dirty/save state
 - task toggles
 - table-edit mutations

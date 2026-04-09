@@ -30,7 +30,7 @@ def _coerce_value(raw: str) -> object:
 
 class TableEditor(Vertical):
     def __init__(self, directive: Directive, rows: list[dict[str, object]], ctx: RenderContext) -> None:
-        super().__init__()
+        super().__init__(classes="table-editor")
         self.directive = directive
         self.rows = deepcopy(rows)
         self.ctx = ctx
@@ -121,4 +121,4 @@ class TableRenderer:
                 rows.append(parsed)
             else:
                 rows.append({"value": parsed})
-        return rows
+        return rows or None

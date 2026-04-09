@@ -4,8 +4,8 @@ import json
 from pathlib import Path
 
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal, VerticalScroll
-from textual.widgets import Button, Footer, Header, Static
+from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.widgets import Button, Footer, Header, Static, TextArea
 
 from folio.core.events import EventBus
 from folio.core.models import Directive, DocumentModel, TextMutation
@@ -42,6 +42,9 @@ class FolioApp(App[None]):
       padding: 1 2;
       overflow: auto;
     }
+    #source-editor {
+      height: 1fr;
+    }
     .pane-title {
       text-style: bold;
       margin-bottom: 1;
@@ -59,6 +62,29 @@ class FolioApp(App[None]):
     .status-line.error {
       color: $error;
     }
+    .py-run {
+      width: 12;
+      margin-bottom: 1;
+    }
+    .py-block {
+      height: auto;
+      border: round $surface-lighten-1;
+      padding: 1;
+      margin-bottom: 1;
+    }
+    .py-code, .py-output {
+      height: auto;
+    }
+    .table-editor {
+      height: auto;
+      border: round $surface-lighten-1;
+      padding: 1;
+      margin-bottom: 1;
+    }
+    .table-editor-controls {
+      height: auto;
+      margin-top: 1;
+    }
     Button {
       min-width: 10;
     }
@@ -67,6 +93,7 @@ class FolioApp(App[None]):
     BINDINGS = [
         ("q", "quit", "Quit"),
         ("r", "reload_document", "Reload"),
+        ("ctrl+s", "save_source", "Save"),
     ]
 
     def __init__(self, document_path: Path) -> None:
@@ -80,6 +107,8 @@ class FolioApp(App[None]):
         self.model = DocumentModel(text="")
         self.py_worker = PyWorker()
         self.py_results = {}
+        self._loading_source = False
+        self._source_dirty = False
         self._register_renderers()
 
     def _register_renderers(self) -> None:
@@ -92,7 +121,15 @@ class FolioApp(App[None]):
     def compose(self) -> ComposeResult:
         yield Header()
         with Horizontal(id="body"):
-            yield VerticalScroll(id="source-pane")
+            with Vertical(id="source-pane"):
+                yield Static("Source", id="source-title", classes="pane-title")
+                yield TextArea(
+                    "",
+                    id="source-editor",
+                    language="markdown",
+                    soft_wrap=False,
+                    show_line_numbers=True,
+                )
             yield VerticalScroll(id="render-pane")
         yield VerticalScroll(id="status-pane")
         yield Footer()
@@ -104,16 +141,26 @@ class FolioApp(App[None]):
     def action_reload_document(self) -> None:
         self.reload_document()
 
+    def action_save_source(self) -> None:
+        editor = self.query_one("#source-editor", TextArea)
+        self.store.save(editor.text)
+        self._source_dirty = False
+        self._set_source_title()
+        self.log_status(f"Saved source document to {self.document_path}.")
+        self.reload_document()
+
     def reload_document(self) -> None:
         text = self.store.load()
         model = self.parser.parse(text)
         self.model = model
         self.py_results = self._run_autorun_blocks()
 
-        source = self.query_one("#source-pane", VerticalScroll)
-        source.remove_children()
-        source.mount(Static("Source", classes="pane-title"))
-        source.mount(Static(text or "(empty document)"))
+        editor = self.query_one("#source-editor", TextArea)
+        self._loading_source = True
+        editor.load_text(text)
+        self._loading_source = False
+        self._source_dirty = False
+        self._set_source_title()
 
         render = self.query_one("#render-pane", VerticalScroll)
         render.remove_children()
@@ -141,22 +188,16 @@ class FolioApp(App[None]):
                 render.mount(widget)
                 current = next(directives, None)
 
+        render.refresh(repaint=True, layout=True)
         self._log_autorun_results()
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        button_id = event.button.id or ""
-        if button_id.startswith("toggle-"):
-            target = button_id.removeprefix("toggle-")
-            directive = self._find_directive("task", target)
-            if directive is not None:
-                self.toggle_task(directive)
+    def on_text_area_changed(self, event: TextArea.Changed) -> None:
+        if event.text_area.id != "source-editor" or self._loading_source:
             return
-
-        if button_id.startswith("run-py-"):
-            target = button_id.removeprefix("run-py-")
-            directive = self._find_directive("py", target)
-            if directive is not None:
-                self.run_py_block(directive)
+        if not self._source_dirty:
+            self._source_dirty = True
+            self._set_source_title()
+            self.log_status("Source buffer modified. Press Ctrl+S to save and reparse.")
 
     def _find_directive(self, directive_type: str, target: str) -> Directive | None:
         return next(
@@ -180,12 +221,13 @@ class FolioApp(App[None]):
 
     def run_py_block(self, directive: Directive) -> None:
         self.log_status(f"Running {directive.title()} in subprocess worker.")
+        key = directive.id or str(directive.start_line)
         results = self.py_worker.run_document(
             self._py_directives(),
-            trigger_key=directive.id or str(directive.start_line),
+            trigger_key=key,
         )
         self.py_results = results
-        result = results.get(directive.id or str(directive.start_line))
+        result = results.get(key)
         if result is not None:
             if result.status == "ok":
                 summary = f"stdout lines={len(result.stdout)}"
@@ -226,6 +268,8 @@ class FolioApp(App[None]):
                 render.mount(widget)
                 current = next(directives, None)
 
+        render.refresh(repaint=True, layout=True)
+
     def toggle_task(self, directive: Directive) -> None:
         done = directive.params.get("done", '"false"').strip('"').lower() == "true"
         directive.params["done"] = '"false"' if done else '"true"'
@@ -250,6 +294,18 @@ class FolioApp(App[None]):
         params = dict(directive.params)
         params.pop("source", None)
         params["editable"] = '"true"'
+        self._replace_table_directive(directive, rows, params=params, source="table.edit")
+        self.log_status(f"{directive.title()} updated from widget edit; source rows materialized into document.")
+        self.reload_document()
+
+    def _replace_table_directive(
+        self,
+        directive: Directive,
+        rows: list[dict[str, object]],
+        *,
+        params: dict[str, str],
+        source: str,
+    ) -> None:
         header = self._directive_header(directive.type, directive.id, params)
         body = [json.dumps(row, ensure_ascii=True) for row in rows]
         new_text = "\n".join([header, *body, "::end"])
@@ -258,11 +314,9 @@ class FolioApp(App[None]):
             start_line=directive.start_line,
             end_line=directive.end_line,
             new_text=new_text,
-            source="table.edit",
+            source=source,
         )
         self.mutations.apply(mutation)
-        self.log_status(f"{directive.title()} updated from widget edit; source rows materialized into document.")
-        self.reload_document()
 
     def _directive_header(self, directive_type: str, directive_id: str | None, params: dict[str, str]) -> str:
         ident = f"[{directive_id}]" if directive_id else ""
@@ -275,6 +329,10 @@ class FolioApp(App[None]):
         pane = self.query_one("#status-pane", VerticalScroll)
         pane.remove_children()
         pane.mount(Static("Status", classes="pane-title"))
+
+    def _set_source_title(self) -> None:
+        title = self.query_one("#source-title", Static)
+        title.update("Source *" if self._source_dirty else "Source")
 
     def log_status(self, message: str, *, error: bool = False) -> None:
         pane = self.query_one("#status-pane", VerticalScroll)

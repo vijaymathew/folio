@@ -286,3 +286,194 @@ The right first implementation is:
 - **State model:** text mutations only
 
 That is the shortest path to proving the thesis of Folio without overcommitting to the hardest parts of the system too early.
+
+## Implementation Checklist
+
+Status key:
+
+- `done`: implemented and working in the current Folio scaffold
+- `partial`: present, but simplified, placeholder-backed, or not implemented to the level described above
+- `not started`: not implemented in the current scaffold
+
+### Recommendation / Stack
+
+- `done` Python host language
+- `done` Textual UI
+- `done` plain text file storage
+- `done` external Python worker process for `::py`
+
+### What To Build First
+
+- `done` `::task`
+- `done` `::py`
+- `done` `::table`
+- `partial` `::note`
+  Current renderer is still a placeholder, not real section transclusion.
+- `partial` `::file`
+  Current renderer is still a placeholder, not a true preview or directory listing.
+
+### Minimal Runtime Architecture
+
+- `done` text file → `DocumentStore`
+- `done` `DocumentStore` → `DirectiveParser`
+- `done` parser output → renderer registry / render loop
+- `done` renderers → mutation engine → updated text file
+- `partial` directive index
+  The parser emits directive/prose structures with ranges, but there is no separate indexed service.
+- `partial` render engine abstraction
+  The render loop exists, but it is embedded directly in the app rather than factored into its own engine/module.
+
+### Core Modules
+
+- `done` `DocumentStore`
+- `done` `DirectiveParser`
+- `done` `CapabilityRegistry`
+- `done` `MutationEngine`
+- `partial` `EventBus`
+  The bus exists, but the app mostly calls mutation methods directly instead of routing through it.
+- `done` `models.py`
+- `done` `ui/App.py`
+- `not started` `ui/DocumentView.py`
+- `not started` `ui/SourcePane.py`
+- `not started` `ui/MutationLog.py`
+- `done` `renderers/base.py`
+- `done` `renderers/TaskRenderer.py`
+- `done` `renderers/PyRenderer.py`
+- `done` `renderers/TableRenderer.py`
+- `partial` `renderers/NoteRenderer.py`
+- `partial` `renderers/FileRenderer.py`
+- `done` `python/PyWorker.py`
+
+### Responsibilities
+
+#### DocumentStore
+
+- `done` loads and saves the text file
+- `partial` tracks current revision in memory
+  It caches current text, but does not manage explicit revision ids or history.
+- `not started` exposes line/range replacement operations directly
+  Range replacement currently lives in `MutationEngine`.
+
+#### DirectiveParser
+
+- `done` cheap line-oriented parse
+- `done` extracts type, id, params, body, and source range
+- `partial` builds a directive index for rendering/mutation targeting
+  Parsed ranges are sufficient for targeting, but there is no separate reusable index object.
+
+#### CapabilityRegistry
+
+- `done` maps directive types to renderer implementations
+- `not started` exposes renderer manifests / capability declarations
+- `done` allows partial rendering when a directive type is unsupported
+  Unknown directives fall back to raw header text.
+
+#### MutationEngine
+
+- `done` converts widget actions into text mutations
+- `done` supports append / replace / delete
+- `partial` applies mutation, then triggers reparse / rerender
+  The apply step is separate; the app coordinates reparse/rerender around it.
+
+#### EventBus
+
+- `partial` exists
+- `not started` serves as the main connection between renderers and mutation layer
+- `partial` helps keep some UI concerns separated, but is not central to the runtime
+
+#### Renderers
+
+- `done` receive parsed directives plus context
+- `done` return Textual widgets
+- `partial` emit semantic actions rather than direct file edits
+  This is true for `task` and `py`; `table` still invokes the mutation callback more directly.
+
+### UI Layout
+
+- `done` split source pane + rendered pane + bottom status pane
+- `done` editable source buffer
+- `done` mutation/status/error pane
+- `not started` per-directive source/widget toggle
+- `not started` single-pane alternative mode
+
+### Python Execution
+
+- `done` `::py` does not execute in the main TUI process
+- `done` separate Python worker process
+- `done` executes relevant `::py` blocks in document order
+- `done` shared document-scoped namespace across blocks
+- `done` returns stdout
+- `done` returns exported variables
+- `done` returns table-compatible structured results
+- `done` returns tracebacks / errors
+- `partial` future path to stricter sandboxing
+  There is a constrained execution policy, but it is not a hardened sandbox.
+
+### Data Model
+
+- `done` `Directive`
+- `done` `TextMutation`
+- `done` `PyBlockResult`
+  This goes beyond the minimal model described above.
+
+### Rendering Model
+
+- `done` load document text
+- `done` parse into directives and prose spans
+- `done` build a mixed render tree
+- `not started` render only the visible window plus a small margin
+  Current app rerenders the full document.
+- `partial` emit semantic event → convert to mutation → apply → reparse → rerender
+  The overall loop exists, but event routing is still somewhat direct and app-driven.
+
+### First Interactive Features
+
+#### `::task`
+
+- `done` checkbox-like rendering with title and due metadata
+- `done` toggling rewrites directive text
+
+#### `::py`
+
+- `done` shows code, output, and run button for manual blocks
+- `done` rebuilds context in document order on each run
+
+#### `::table`
+
+- `done` read-only rendering from `table(rows)` output
+- `done` cell editing through text mutations
+- `partial` editing UX
+  Editing works, but it is select-then-edit-via-input rather than direct in-cell typing.
+
+#### `::note`
+
+- `not started` resolve section from another file
+- `partial` inline rendering
+  Inline placeholder widget exists.
+
+#### `::file`
+
+- `not started` real local file preview
+- `not started` real directory listing
+- `partial` placeholder widget exists
+
+### Why A Console Renderer Is Viable
+
+- `done` buttons
+- `done` checkboxes
+- `done` text inputs
+- `not started` tabbed views
+- `not started` dialogs
+- `done` editable tables
+- `partial` inline advisories
+  The layout can support them, but there is not yet a dedicated advisory/conflict system.
+- `done` mutation logs / status pane
+
+### Non-Goals For V1
+
+- `done` perfect sandboxing not attempted
+- `done` real-time backend sync not implemented
+- `done` rich media rendering not implemented
+- `done` drag and drop not implemented
+- `done` full plugin distribution not implemented
+- `done` conflict-resolution UX beyond simple markers not implemented

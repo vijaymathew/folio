@@ -1,0 +1,23 @@
+Monday, 24 March 2026. Working notes for the console renderer prototype.
+
+::task[call-finance]{due="today" priority="high" done="false"}
+Call finance about hardware variance
+::end
+
+::task[send-q3]{due="2026-03-25" blocked-by="call-finance" done="false"}
+Send Q3 brief to Sara
+::end
+
+The table and Python blocks below are placeholders in this scaffold, but they define the structure the console renderer needs to understand.
+
+::py[budget-check]{run="manual"}
+actuals = [4200, 1850, 6700, 3100]
+budget = [3500, 2000, 5000, 3000]
+print(sum(a - b for a, b in zip(actuals, budget)))
+::end
+
+::table[q3-breakdown]{source="budget-check" sortable="true" editable="true"}
+
+::note[design-principles]{section="colours"}
+
+::file[docs/example.folio]{preview="text"}

@@ -50,3 +50,13 @@ Remote backends are intentionally excluded from this first cut.
 - `run="auto"` blocks execute on reload
 - manual blocks execute when `Run` is pressed
 - stdout and tracebacks are returned to the renderer without running code in the main TUI process
+
+The worker uses a constrained execution policy:
+
+- only a small safe subset of builtins is exposed
+- imports are restricted to an explicit allowlist
+- dangerous names like `open`, `eval`, `exec`, and `__import__` are blocked
+- function/class definitions, `try`, `with`, `raise`, and `while` are rejected
+- subprocess execution is time-limited, with resource limits applied where the platform supports them
+
+`table(rows)` is also available inside `::py` blocks. When a block calls it with a list of dictionaries, the corresponding `::table` renderer can display those structured rows directly.

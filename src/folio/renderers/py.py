@@ -15,7 +15,11 @@ class PyRenderer:
         if result is None:
             output = "No result yet. Run the block to evaluate document context."
         elif result.status == "ok":
-            output = "\n".join(result.stdout) if result.stdout else "(no output)"
+            extras = []
+            if result.table is not None:
+                extras.append(f"[table captured: {len(result.table)} rows]")
+            stdout = "\n".join(result.stdout) if result.stdout else "(no output)"
+            output = "\n".join([stdout, *extras]) if extras else stdout
         elif result.status == "manual":
             output = "Manual block. Press Run to evaluate."
         elif result.status == "blocked":

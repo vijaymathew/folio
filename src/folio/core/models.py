@@ -60,3 +60,4 @@ class PyBlockResult:
     stdout: list[str]
     error: str | None
     context: dict[str, object] = field(default_factory=dict)
+    table: list[dict[str, object]] | None = None

@@ -1,19 +1,134 @@
 from __future__ import annotations
 
+import ast
 import contextlib
 import io
 import json
+import math
+import os
+import statistics
 import subprocess
 import sys
 import traceback
-from dataclasses import asdict
+from pathlib import Path
 from typing import Any
 
 from folio.core.models import Directive, PyBlockResult
 
+try:
+    import resource
+except ImportError:  # pragma: no cover
+    resource = None
+
+
+ALLOWED_IMPORTS: dict[str, Any] = {
+    "math": math,
+    "statistics": statistics,
+}
+
+SAFE_BUILTINS: dict[str, Any] = {
+    "abs": abs,
+    "all": all,
+    "any": any,
+    "bool": bool,
+    "dict": dict,
+    "enumerate": enumerate,
+    "float": float,
+    "int": int,
+    "len": len,
+    "list": list,
+    "max": max,
+    "min": min,
+    "print": print,
+    "range": range,
+    "reversed": reversed,
+    "round": round,
+    "set": set,
+    "sorted": sorted,
+    "str": str,
+    "sum": sum,
+    "tuple": tuple,
+    "zip": zip,
+}
+
+FORBIDDEN_NAMES = {
+    "__import__",
+    "breakpoint",
+    "compile",
+    "eval",
+    "exec",
+    "getattr",
+    "globals",
+    "help",
+    "input",
+    "locals",
+    "open",
+    "setattr",
+    "delattr",
+    "vars",
+}
+
+FORBIDDEN_NODES = (
+    ast.AsyncFor,
+    ast.AsyncFunctionDef,
+    ast.AsyncWith,
+    ast.Await,
+    ast.ClassDef,
+    ast.Delete,
+    ast.FunctionDef,
+    ast.Global,
+    ast.Nonlocal,
+    ast.Raise,
+    ast.Try,
+    ast.While,
+    ast.With,
+    ast.Yield,
+    ast.YieldFrom,
+)
+
 
 def _block_key(directive: Directive) -> str:
     return directive.id or str(directive.start_line)
+
+
+def _safe_error(message: str) -> str:
+    return f"SafeExecutionError: {message}"
+
+
+def _validate_code(code: str) -> ast.AST:
+    try:
+        tree = ast.parse(code, mode="exec")
+    except SyntaxError as exc:
+        raise ValueError(f"syntax error on line {exc.lineno}: {exc.msg}") from exc
+
+    for node in ast.walk(tree):
+        if isinstance(node, FORBIDDEN_NODES):
+            raise ValueError(f"{type(node).__name__} is not allowed in ::py blocks")
+
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                root = alias.name.split(".", 1)[0]
+                if root not in ALLOWED_IMPORTS:
+                    raise ValueError(f"import of '{alias.name}' is not allowed")
+
+        if isinstance(node, ast.ImportFrom):
+            module = (node.module or "").split(".", 1)[0]
+            if module not in ALLOWED_IMPORTS:
+                raise ValueError(f"import from '{node.module}' is not allowed")
+
+        if isinstance(node, ast.Name):
+            if node.id in FORBIDDEN_NAMES or node.id.startswith("__"):
+                raise ValueError(f"name '{node.id}' is not allowed")
+
+        if isinstance(node, ast.Attribute) and node.attr.startswith("__"):
+            raise ValueError(f"attribute '{node.attr}' is not allowed")
+
+        if isinstance(node, ast.Call):
+            func = node.func
+            if isinstance(func, ast.Name) and func.id in FORBIDDEN_NAMES:
+                raise ValueError(f"call to '{func.id}' is not allowed")
+
+    return tree
 
 
 def _export(value: Any, depth: int = 0) -> Any:
@@ -22,21 +137,48 @@ def _export(value: Any, depth: int = 0) -> Any:
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
     if isinstance(value, list):
-        return [_export(item, depth + 1) for item in value[:32]]
+        return [_export(item, depth + 1) for item in value[:64]]
     if isinstance(value, tuple):
-        return [_export(item, depth + 1) for item in value[:32]]
+        return [_export(item, depth + 1) for item in value[:64]]
     if isinstance(value, dict):
         return {
             str(key): _export(item, depth + 1)
-            for key, item in list(value.items())[:32]
+            for key, item in list(value.items())[:64]
         }
     if isinstance(value, set):
-        return [_export(item, depth + 1) for item in list(value)[:32]]
+        return [_export(item, depth + 1) for item in list(value)[:64]]
     return repr(value)
 
 
+def _coerce_table(rows: Any) -> list[dict[str, object]] | None:
+    if not isinstance(rows, list):
+        return None
+    if not rows:
+        return []
+    normalized: list[dict[str, object]] = []
+    for row in rows[:128]:
+        if isinstance(row, dict):
+            normalized.append({str(key): _export(value) for key, value in row.items()})
+        else:
+            normalized.append({"value": _export(row)})
+    return normalized
+
+
+def _safe_import(name: str, globals_: dict[str, Any] | None = None, locals_: dict[str, Any] | None = None, fromlist: tuple[str, ...] = (), level: int = 0) -> Any:
+    root = name.split(".", 1)[0]
+    if root not in ALLOWED_IMPORTS:
+        raise ImportError(f"import of '{name}' is not allowed")
+    return ALLOWED_IMPORTS[root]
+
+
+def _safe_builtins() -> dict[str, Any]:
+    builtins_copy = dict(SAFE_BUILTINS)
+    builtins_copy["__import__"] = _safe_import
+    return builtins_copy
+
+
 def _evaluate_payload(blocks: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    shared: dict[str, Any] = {"__builtins__": __builtins__}
+    shared: dict[str, Any] = {"__builtins__": _safe_builtins()}
     results: dict[str, dict[str, Any]] = {}
     halted = False
 
@@ -50,6 +192,7 @@ def _evaluate_payload(blocks: list[dict[str, Any]]) -> dict[str, dict[str, Any]]
                 "stdout": [],
                 "error": "Skipped because an earlier Python block failed.",
                 "context": {},
+                "table": None,
             }
             continue
 
@@ -60,18 +203,30 @@ def _evaluate_payload(blocks: list[dict[str, Any]]) -> dict[str, dict[str, Any]]
                 "stdout": [],
                 "error": None,
                 "context": {},
+                "table": None,
             }
             continue
 
         buf = io.StringIO()
+        table_output: dict[str, list[dict[str, object]] | None] = {"rows": None}
+
+        def table(rows: Any) -> Any:
+            normalized = _coerce_table(rows)
+            if normalized is None:
+                raise ValueError("table(...) expects a list of rows or values")
+            table_output["rows"] = normalized
+            return rows
+
+        shared["table"] = table
         try:
+            tree = _validate_code(block["code"])
             with contextlib.redirect_stdout(buf):
-                exec(block["code"], shared)
+                exec(compile(tree, f"<py:{key}>", "exec"), shared)
 
             exported = {
                 name: _export(value)
                 for name, value in shared.items()
-                if not name.startswith("__")
+                if not name.startswith("__") and name != "table"
             }
             results[key] = {
                 "key": key,
@@ -79,22 +234,38 @@ def _evaluate_payload(blocks: list[dict[str, Any]]) -> dict[str, dict[str, Any]]
                 "stdout": buf.getvalue().splitlines(),
                 "error": None,
                 "context": exported,
+                "table": table_output["rows"],
             }
-        except Exception:
+        except Exception as exc:
             halted = True
+            error = _safe_error(str(exc)) if isinstance(exc, (ValueError, ImportError)) else traceback.format_exc().rstrip()
             results[key] = {
                 "key": key,
                 "status": "error",
                 "stdout": buf.getvalue().splitlines(),
-                "error": traceback.format_exc().rstrip(),
+                "error": error,
                 "context": {},
+                "table": None,
             }
+        finally:
+            shared.pop("table", None)
 
     return results
 
 
+def _limit_subprocess() -> None:
+    if resource is None:  # pragma: no cover
+        return
+    try:
+        resource.setrlimit(resource.RLIMIT_CPU, (2, 2))
+        memory = 256 * 1024 * 1024
+        resource.setrlimit(resource.RLIMIT_AS, (memory, memory))
+    except Exception:
+        return
+
+
 class PyWorker:
-    """Subprocess-backed runtime for document-scoped ::py evaluation."""
+    """Subprocess-backed runtime for constrained document-scoped ::py evaluation."""
 
     def run_document(
         self,
@@ -119,13 +290,34 @@ class PyWorker:
             ]
         }
 
-        proc = subprocess.run(
-            [sys.executable, "-m", "folio.python.worker"],
-            input=json.dumps(payload),
-            text=True,
-            capture_output=True,
-            check=False,
-        )
+        env = os.environ.copy()
+        src_root = str(Path(__file__).resolve().parents[2])
+        env["PYTHONPATH"] = src_root + os.pathsep + env.get("PYTHONPATH", "")
+
+        try:
+            proc = subprocess.run(
+                [sys.executable, "-m", "folio.python.worker"],
+                input=json.dumps(payload),
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=3,
+                env=env,
+                preexec_fn=_limit_subprocess if resource is not None else None,
+            )
+        except subprocess.TimeoutExpired:
+            return {
+                _block_key(directive): PyBlockResult(
+                    key=_block_key(directive),
+                    status="error",
+                    stdout=[],
+                    error="SafeExecutionError: execution timed out",
+                    context={},
+                    table=None,
+                )
+                for directive in directives
+            }
+
         if proc.returncode != 0:
             error = proc.stderr.strip() or "Python worker failed."
             return {
@@ -135,6 +327,7 @@ class PyWorker:
                     stdout=[],
                     error=error,
                     context={},
+                    table=None,
                 )
                 for directive in directives
             }
@@ -147,6 +340,7 @@ class PyWorker:
                 stdout=value.get("stdout", []),
                 error=value.get("error"),
                 context=value.get("context", {}),
+                table=value.get("table"),
             )
             for key, value in raw_results.items()
         }
@@ -159,11 +353,12 @@ class PyWorker:
         trigger_key: str | None,
         autorun_only: bool,
     ) -> bool:
+        run_mode = directive.params.get("run", '"manual"').strip('"')
         if autorun_only:
-            return directive.params.get("run", '"manual"').strip('"') == "auto"
+            return run_mode == "auto"
 
         if trigger_key is None:
-            return directive.params.get("run", '"manual"').strip('"') == "auto"
+            return run_mode == "auto"
 
         keys = [_block_key(item) for item in directives]
         current_key = _block_key(directive)

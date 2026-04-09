@@ -13,13 +13,19 @@ The table and Python blocks below are placeholders in this scaffold, but they de
 ::py[q3-data]{run="auto"}
 actuals = [4200, 1850, 6700, 3100]
 budget = [3500, 2000, 5000, 3000]
+categories = ["Travel", "Software", "Hardware", "Marketing"]
 ::end
 
 ::py[budget-check]{run="manual"}
 print(sum(a - b for a, b in zip(actuals, budget)))
+rows = [
+    {"category": c, "actual": a, "budget": b, "delta": a - b}
+    for c, a, b in zip(categories, actuals, budget)
+]
+table(rows)
 ::end
 
-::table[q3-breakdown]{source="q3-data" sortable="true" editable="true"}
+::table[q3-breakdown]{source="budget-check" sortable="true" editable="true"}
 
 ::note[design-principles]{section="colours"}
 

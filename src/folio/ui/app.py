@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from textual.app import App, ComposeResult
@@ -29,6 +30,12 @@ class FolioApp(App[None]):
     #body {
       height: 1fr;
     }
+    #status-pane {
+      height: 10;
+      border: round $surface;
+      padding: 1 2;
+      overflow: auto;
+    }
     #source-pane, #render-pane {
       width: 1fr;
       border: round $surface;
@@ -45,6 +52,12 @@ class FolioApp(App[None]):
     .task-due {
       color: $text-muted;
       width: 16;
+    }
+    .status-line {
+      color: $text-muted;
+    }
+    .status-line.error {
+      color: $error;
     }
     Button {
       min-width: 10;
@@ -81,9 +94,11 @@ class FolioApp(App[None]):
         with Horizontal(id="body"):
             yield VerticalScroll(id="source-pane")
             yield VerticalScroll(id="render-pane")
+        yield VerticalScroll(id="status-pane")
         yield Footer()
 
     def on_mount(self) -> None:
+        self._reset_status_pane()
         self.reload_document()
 
     def action_reload_document(self) -> None:
@@ -107,6 +122,7 @@ class FolioApp(App[None]):
         ctx = RenderContext(
             toggle_task=self.toggle_task,
             run_py=self.run_py_block,
+            update_table=self.update_table_directive,
             py_results=self.py_results,
         )
         prose_index = 0
@@ -124,6 +140,8 @@ class FolioApp(App[None]):
                 widget = renderer.render(current, ctx) if renderer else Static(current.header_line)
                 render.mount(widget)
                 current = next(directives, None)
+
+        self._log_autorun_results()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = event.button.id or ""
@@ -161,11 +179,21 @@ class FolioApp(App[None]):
         return self.py_worker.run_document(directives, autorun_only=True)
 
     def run_py_block(self, directive: Directive) -> None:
+        self.log_status(f"Running {directive.title()} in subprocess worker.")
         results = self.py_worker.run_document(
             self._py_directives(),
             trigger_key=directive.id or str(directive.start_line),
         )
         self.py_results = results
+        result = results.get(directive.id or str(directive.start_line))
+        if result is not None:
+            if result.status == "ok":
+                summary = f"stdout lines={len(result.stdout)}"
+                if result.table is not None:
+                    summary += f", table rows={len(result.table)}"
+                self.log_status(f"{directive.title()} completed successfully ({summary}).")
+            else:
+                self.log_status(f"{directive.title()} failed: {result.error}", error=True)
         self.reload_render_pane()
 
     def reload_render_pane(self) -> None:
@@ -179,6 +207,7 @@ class FolioApp(App[None]):
         ctx = RenderContext(
             toggle_task=self.toggle_task,
             run_py=self.run_py_block,
+            update_table=self.update_table_directive,
             py_results=self.py_results,
         )
         prose_index = 0
@@ -214,4 +243,47 @@ class FolioApp(App[None]):
             source="task.toggle",
         )
         self.mutations.apply(mutation)
+        self.log_status(f"{directive.title()} toggled -> done={directive.params['done']}.")
         self.reload_document()
+
+    def update_table_directive(self, directive: Directive, rows: list[dict[str, object]]) -> None:
+        params = dict(directive.params)
+        params.pop("source", None)
+        params["editable"] = '"true"'
+        header = self._directive_header(directive.type, directive.id, params)
+        body = [json.dumps(row, ensure_ascii=True) for row in rows]
+        new_text = "\n".join([header, *body, "::end"])
+        mutation = TextMutation(
+            kind="replace",
+            start_line=directive.start_line,
+            end_line=directive.end_line,
+            new_text=new_text,
+            source="table.edit",
+        )
+        self.mutations.apply(mutation)
+        self.log_status(f"{directive.title()} updated from widget edit; source rows materialized into document.")
+        self.reload_document()
+
+    def _directive_header(self, directive_type: str, directive_id: str | None, params: dict[str, str]) -> str:
+        ident = f"[{directive_id}]" if directive_id else ""
+        if not params:
+            return f"::{directive_type}{ident}"
+        items = " ".join(f"{key}={value}" for key, value in params.items())
+        return f"::{directive_type}{ident}{{{items}}}"
+
+    def _reset_status_pane(self) -> None:
+        pane = self.query_one("#status-pane", VerticalScroll)
+        pane.remove_children()
+        pane.mount(Static("Status", classes="pane-title"))
+
+    def log_status(self, message: str, *, error: bool = False) -> None:
+        pane = self.query_one("#status-pane", VerticalScroll)
+        classes = "status-line error" if error else "status-line"
+        pane.mount(Static(message, classes=classes))
+
+    def _log_autorun_results(self) -> None:
+        for key, result in self.py_results.items():
+            if result.status == "ok":
+                self.log_status(f"Autorun ::py[{key}] completed.")
+            elif result.status == "error":
+                self.log_status(f"Autorun ::py[{key}] failed: {result.error}", error=True)

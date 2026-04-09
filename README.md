@@ -59,4 +59,26 @@ The worker uses a constrained execution policy:
 - function/class definitions, `try`, `with`, `raise`, and `while` are rejected
 - subprocess execution is time-limited, with resource limits applied where the platform supports them
 
+The allowlist currently includes common document-compute modules such as:
+
+- `math`
+- `statistics`
+- `collections`
+- `datetime`
+- `decimal`
+- `fractions`
+- `functools`
+- `itertools`
+- `re`
+- `string`
+- `textwrap`
+
 `table(rows)` is also available inside `::py` blocks. When a block calls it with a list of dictionaries, the corresponding `::table` renderer can display those structured rows directly.
+
+The bottom status pane surfaces:
+
+- autorun completion
+- manual worker runs
+- safety policy failures
+- task toggles
+- table-edit mutations

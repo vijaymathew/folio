@@ -12,6 +12,7 @@ from folio.core.models import Directive, PyBlockResult
 class RenderContext:
     toggle_task: Callable[[Directive], None] | None = None
     run_py: Callable[[Directive], None] | None = None
+    update_table: Callable[[Directive, list[dict[str, object]]], None] | None = None
     py_results: dict[str, PyBlockResult] | None = None
 
 

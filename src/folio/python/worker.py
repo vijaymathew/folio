@@ -6,10 +6,19 @@ import io
 import json
 import math
 import os
+import re
 import statistics
+import string
 import subprocess
 import sys
+import textwrap
 import traceback
+from collections import Counter, defaultdict
+from datetime import date, datetime, timedelta
+from decimal import Decimal
+from fractions import Fraction
+from functools import reduce
+from itertools import chain
 from pathlib import Path
 from typing import Any
 
@@ -22,8 +31,17 @@ except ImportError:  # pragma: no cover
 
 
 ALLOWED_IMPORTS: dict[str, Any] = {
+    "collections": __import__("collections"),
+    "datetime": __import__("datetime"),
+    "decimal": __import__("decimal"),
+    "fractions": __import__("fractions"),
+    "functools": __import__("functools"),
+    "itertools": __import__("itertools"),
     "math": math,
+    "re": re,
     "statistics": statistics,
+    "string": string,
+    "textwrap": textwrap,
 }
 
 SAFE_BUILTINS: dict[str, Any] = {
@@ -34,9 +52,11 @@ SAFE_BUILTINS: dict[str, Any] = {
     "dict": dict,
     "enumerate": enumerate,
     "float": float,
+    "filter": filter,
     "int": int,
     "len": len,
     "list": list,
+    "map": map,
     "max": max,
     "min": min,
     "print": print,
@@ -179,6 +199,19 @@ def _safe_builtins() -> dict[str, Any]:
 
 def _evaluate_payload(blocks: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     shared: dict[str, Any] = {"__builtins__": _safe_builtins()}
+    shared.update(
+        {
+            "Counter": Counter,
+            "Decimal": Decimal,
+            "Fraction": Fraction,
+            "date": date,
+            "datetime": datetime,
+            "timedelta": timedelta,
+            "defaultdict": defaultdict,
+            "reduce": reduce,
+            "chain": chain,
+        }
+    )
     results: dict[str, dict[str, Any]] = {}
     halted = False
 

@@ -1,44 +1,124 @@
 from __future__ import annotations
 
-from rich.table import Table
-from textual.widgets import Static
+import json
+from copy import deepcopy
+from typing import Any
+
+from textual.app import ComposeResult
+from textual.containers import Horizontal, Vertical
+from textual.widgets import Button, DataTable, Input, Static
 
 from folio.core.models import Directive
 from folio.renderers.base import RenderContext
 
 
-class TableRenderer:
-    def render(self, directive: Directive, ctx: RenderContext) -> Static:
-        summary = directive.params.get("source", '"inline"').strip('"')
-        if summary and ctx.py_results:
-            result = ctx.py_results.get(summary)
-            if result and result.table is not None:
-                table = self._build_table(result.table)
-                table.title = directive.title()
-                return Static(table, classes="table-widget")
-            if result and result.status == "error":
-                return Static("Source block failed; table data unavailable.", classes="table-widget")
-            if result and result.status == "manual":
-                return Static("Source block is manual. Run it to materialize table rows.", classes="table-widget")
-        return Static(f"{directive.title()}\nNo structured table rows available.", classes="table-widget")
+def _coerce_value(raw: str) -> object:
+    text = raw.strip()
+    if text.lower() == "true":
+        return True
+    if text.lower() == "false":
+        return False
+    if text.lower() == "null":
+        return None
+    try:
+        if "." in text:
+            return float(text)
+        return int(text)
+    except ValueError:
+        return text
 
-    def _build_table(self, rows: list[dict[str, object]]) -> Table:
-        table = Table(expand=True, show_lines=False)
-        if not rows:
-            table.add_column("value")
-            table.add_row("(empty)")
-            return table
 
+class TableEditor(Vertical):
+    def __init__(self, directive: Directive, rows: list[dict[str, object]], ctx: RenderContext) -> None:
+        super().__init__()
+        self.directive = directive
+        self.rows = deepcopy(rows)
+        self.ctx = ctx
+        self.columns = self._collect_columns(rows)
+        self.selected: tuple[int, int] | None = None
+
+    def compose(self) -> ComposeResult:
+        yield Static(self.directive.title(), classes="table-title")
+        yield DataTable(id=f"table-grid-{self.directive.id or self.directive.start_line}")
+        with Horizontal(classes="table-editor-controls"):
+            yield Static("Select a cell to edit.", id="table-edit-status")
+            yield Input(placeholder="New cell value", id="table-edit-input")
+            yield Button("Apply", id="table-apply")
+
+    def on_mount(self) -> None:
+        table = self.query_one(DataTable)
+        table.cursor_type = "cell"
+        table.zebra_stripes = True
+        for column in self.columns:
+            table.add_column(column)
+        for row in self.rows:
+            table.add_row(*(str(row.get(column, "—")) for column in self.columns))
+
+    def on_data_table_cell_selected(self, event: DataTable.CellSelected) -> None:
+        self.selected = (event.coordinate.row, event.coordinate.column)
+        column = self.columns[event.coordinate.column]
+        value = self.rows[event.coordinate.row].get(column, "")
+        self.query_one("#table-edit-status", Static).update(f"Editing {column} at row {event.coordinate.row + 1}")
+        self.query_one("#table-edit-input", Input).value = str(value)
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id == "table-edit-input":
+            self._apply_edit()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "table-apply":
+            self._apply_edit()
+
+    def _apply_edit(self) -> None:
+        if self.selected is None or self.ctx.update_table is None:
+            return
+
+        row_index, column_index = self.selected
+        column = self.columns[column_index]
+        raw = self.query_one("#table-edit-input", Input).value
+        self.rows[row_index][column] = _coerce_value(raw)
+        self.ctx.update_table(self.directive, deepcopy(self.rows))
+
+    def _collect_columns(self, rows: list[dict[str, object]]) -> list[str]:
         columns: list[str] = []
         for row in rows:
             for key in row.keys():
                 if key not in columns:
                     columns.append(key)
+        return columns or ["value"]
 
-        for column in columns:
-            table.add_column(column, overflow="fold")
 
-        for row in rows:
-            table.add_row(*(str(row.get(column, "—")) for column in columns))
+class TableRenderer:
+    def render(self, directive: Directive, ctx: RenderContext) -> Static:
+        rows = self._rows_from_directive(directive)
+        if rows is None:
+            source = directive.params.get("source", '"inline"').strip('"')
+            if source and ctx.py_results:
+                result = ctx.py_results.get(source)
+                if result and result.table is not None:
+                    rows = result.table
+                elif result and result.status == "error":
+                    return Static("Source block failed; table data unavailable.", classes="table-widget")
+                elif result and result.status == "manual":
+                    return Static("Source block is manual. Run it to materialize table rows.", classes="table-widget")
 
-        return table
+        if rows is None:
+            return Static(f"{directive.title()}\nNo structured table rows available.", classes="table-widget")
+
+        return TableEditor(directive, rows, ctx)
+
+    def _rows_from_directive(self, directive: Directive) -> list[dict[str, object]] | None:
+        if not directive.body:
+            return None
+
+        rows: list[dict[str, object]] = []
+        for line in directive.body:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            parsed = json.loads(stripped)
+            if isinstance(parsed, dict):
+                rows.append(parsed)
+            else:
+                rows.append({"value": parsed})
+        return rows

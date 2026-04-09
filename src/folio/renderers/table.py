@@ -40,8 +40,8 @@ class TableEditor(Vertical):
     def compose(self) -> ComposeResult:
         yield Static(self.directive.title(), classes="table-title")
         yield DataTable(id=f"table-grid-{self.directive.id or self.directive.start_line}")
-        with Horizontal(classes="table-editor-controls"):
-            yield Static("Select a cell to edit.", id="table-edit-status")
+        yield Static("Select a cell to edit.", id="table-edit-status")
+        with Horizontal(classes="table-editor-input-row"):
             yield Input(placeholder="New cell value", id="table-edit-input")
             yield Button("Apply", id="table-apply")
 
@@ -53,13 +53,23 @@ class TableEditor(Vertical):
             table.add_column(column)
         for row in self.rows:
             table.add_row(*(str(row.get(column, "—")) for column in self.columns))
+        if self.rows and self.columns:
+            self._set_active_cell(0, 0)
+
+    def on_data_table_cell_highlighted(self, event: DataTable.CellHighlighted) -> None:
+        self._set_active_cell(event.coordinate.row, event.coordinate.column)
 
     def on_data_table_cell_selected(self, event: DataTable.CellSelected) -> None:
-        self.selected = (event.coordinate.row, event.coordinate.column)
-        column = self.columns[event.coordinate.column]
-        value = self.rows[event.coordinate.row].get(column, "")
-        self.query_one("#table-edit-status", Static).update(f"Editing {column} at row {event.coordinate.row + 1}")
-        self.query_one("#table-edit-input", Input).value = str(value)
+        self._set_active_cell(event.coordinate.row, event.coordinate.column)
+
+    def _set_active_cell(self, row_index: int, column_index: int) -> None:
+        self.selected = (row_index, column_index)
+        column = self.columns[column_index]
+        value = self.rows[row_index].get(column, "")
+        self.query_one("#table-edit-status", Static).update(f"Editing {column} at row {row_index + 1}")
+        edit_input = self.query_one("#table-edit-input", Input)
+        edit_input.value = str(value)
+        edit_input.focus()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id == "table-edit-input":
@@ -70,8 +80,12 @@ class TableEditor(Vertical):
             self._apply_edit()
 
     def _apply_edit(self) -> None:
-        if self.selected is None or self.ctx.update_table is None:
+        if self.ctx.update_table is None:
             return
+        if self.selected is None:
+            table = self.query_one(DataTable)
+            coordinate = table.cursor_coordinate
+            self._set_active_cell(coordinate.row, coordinate.column)
 
         row_index, column_index = self.selected
         column = self.columns[column_index]

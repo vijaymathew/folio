@@ -85,6 +85,21 @@ class FolioApp(App[None]):
       height: auto;
       margin-top: 1;
     }
+    .table-editor-input-row {
+      height: auto;
+      margin-top: 1;
+    }
+    #table-edit-status {
+      height: auto;
+      margin-top: 1;
+    }
+    #table-edit-input {
+      width: 1fr;
+    }
+    #table-apply {
+      width: 10;
+      margin-left: 1;
+    }
     Button {
       min-width: 10;
     }

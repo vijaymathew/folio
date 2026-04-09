@@ -27,6 +27,7 @@ folio docs/example.folio
 - `q`: quit
 - `r`: reload document from disk
 - click `Toggle` on a task to write a text mutation back to the source file
+- click `Run` on a `::py` block to execute document-scoped Python in a subprocess worker
 
 ## Scope
 
@@ -39,3 +40,13 @@ Only document-owned state is in scope for this scaffold:
 - `::file`
 
 Remote backends are intentionally excluded from this first cut.
+
+## Python Execution
+
+`::py` blocks now execute in a subprocess-backed worker:
+
+- blocks are evaluated in document order
+- earlier blocks populate the shared namespace for later ones
+- `run="auto"` blocks execute on reload
+- manual blocks execute when `Run` is pressed
+- stdout and tracebacks are returned to the renderer without running code in the main TUI process

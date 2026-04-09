@@ -9,4 +9,12 @@ from folio.renderers.base import RenderContext
 class TableRenderer:
     def render(self, directive: Directive, ctx: RenderContext) -> Static:
         summary = directive.params.get("source", '"inline"').strip('"')
-        return Static(f"Table renderer placeholder\nsource={summary}", classes="table-widget")
+        lines = [f"Table renderer placeholder", f"source={summary}"]
+        if summary and ctx.py_results:
+            result = ctx.py_results.get(summary)
+            if result and result.context:
+                exported = ", ".join(sorted(result.context.keys()))
+                lines.append(f"exported context: {exported}")
+            elif result and result.status == "error":
+                lines.append("source block failed; table context unavailable")
+        return Static("\n".join(lines), classes="table-widget")

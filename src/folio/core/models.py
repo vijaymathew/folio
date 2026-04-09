@@ -51,3 +51,12 @@ class TextMutation:
     end_line: int
     new_text: str
     source: str
+
+
+@dataclass(slots=True)
+class PyBlockResult:
+    key: str
+    status: str
+    stdout: list[str]
+    error: str | None
+    context: dict[str, object] = field(default_factory=dict)

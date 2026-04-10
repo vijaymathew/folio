@@ -25,6 +25,23 @@ class ContactReaderError(RuntimeError):
 
 
 class ContactReader:
+    INLINE_FIELD_MAP = {
+        "name": "full_name",
+        "full_name": "full_name",
+        "email": "emails",
+        "emails": "emails",
+        "phone": "phones",
+        "phones": "phones",
+        "org": "organization",
+        "organization": "organization",
+        "title": "title",
+        "role": "role",
+        "address": "addresses",
+        "addresses": "addresses",
+        "note": "note",
+        "notes": "note",
+    }
+
     def read_path(self, path: Path, file_access: RendererFileAccess) -> list[ContactCard]:
         if not path.exists():
             raise ContactReaderError(f"Path not found: {path}")
@@ -52,6 +69,53 @@ class ContactReader:
     def write_path(self, path: Path, cards: list[ContactCard], file_access: RendererFileAccess) -> None:
         text = "\n".join(self.serialize_card(card) for card in cards).rstrip() + "\n"
         file_access.write_text(path, text)
+
+    def parse_inline_body(self, lines: list[str]) -> ContactCard:
+        values: dict[str, object] = {}
+        for raw_line in lines:
+            line = raw_line.strip()
+            if not line or "=" not in line:
+                continue
+            raw_key, raw_value = line.split("=", 1)
+            key = self.INLINE_FIELD_MAP.get(raw_key.strip().lower())
+            if key is None:
+                continue
+            value = raw_value.strip()
+            if key in {"emails", "phones"}:
+                values[key] = [item.strip() for item in value.split(",") if item.strip()]
+            elif key == "addresses":
+                values[key] = [item.strip() for item in value.split("|") if item.strip()]
+            else:
+                values[key] = value
+
+        return ContactCard(
+            full_name=str(values.get("full_name") or "Unnamed Contact"),
+            emails=list(values.get("emails", [])),
+            phones=list(values.get("phones", [])),
+            organization=self._clean_string(values.get("organization")),
+            title=self._clean_string(values.get("title")),
+            role=self._clean_string(values.get("role")),
+            addresses=list(values.get("addresses", [])),
+            note=self._clean_string(values.get("note")),
+        )
+
+    def serialize_inline_card(self, card: ContactCard) -> list[str]:
+        lines = [f"name = {card.full_name}"]
+        if card.emails:
+            lines.append("email = " + ", ".join(card.emails))
+        if card.role:
+            lines.append(f"role = {card.role}")
+        if card.organization:
+            lines.append(f"org = {card.organization}")
+        if card.title:
+            lines.append(f"title = {card.title}")
+        if card.phones:
+            lines.append("phone = " + ", ".join(card.phones))
+        if card.addresses:
+            lines.append("address = " + " | ".join(card.addresses))
+        if card.note:
+            lines.append(f"notes = {card.note}")
+        return lines
 
     def serialize_card(self, card: ContactCard) -> str:
         lines = ["BEGIN:VCARD", "VERSION:3.0", f"FN:{self._escape(card.full_name)}"]

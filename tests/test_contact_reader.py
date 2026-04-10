@@ -61,3 +61,23 @@ def test_contact_reader_writes_normalized_vcard(tmp_path: Path) -> None:
     assert "FN:Sara Chen" in updated
     assert "ORG:Northwind Labs" in updated
     assert "TITLE:Finance Lead" in updated
+
+
+def test_contact_reader_parses_inline_contact_body() -> None:
+    card = ContactReader().parse_inline_body(
+        [
+            "name = Sara Chen",
+            "email = sara@example.com, finance@example.com",
+            "role = Head of Product",
+            "org = Example Ltd",
+            "phone = +44 7700 900123",
+            "notes = Prefers async communication.",
+        ]
+    )
+
+    assert card.full_name == "Sara Chen"
+    assert card.emails == ["sara@example.com", "finance@example.com"]
+    assert card.role == "Head of Product"
+    assert card.organization == "Example Ltd"
+    assert card.phones == ["+44 7700 900123"]
+    assert card.note == "Prefers async communication."

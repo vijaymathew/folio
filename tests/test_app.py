@@ -13,6 +13,28 @@ from folio.ui.app import FolioApp
 from textual.widgets import Button, DataTable, Input, TextArea
 
 
+async def _find_visible_button(app: FolioApp, pilot, button_id: str) -> Button:
+    render = app.query_one("#render-pane", DocumentView)
+    for offset in range(0, 240, 8):
+        matches = list(app.query(f"#{button_id}"))
+        if matches:
+            return matches[0]
+        render.scroll_to(y=offset, animate=False)
+        await pilot.pause(0.1)
+    raise AssertionError(f"button #{button_id} was not mounted in the render viewport")
+
+
+async def _find_visible_table(app: FolioApp, pilot) -> TableEditor:
+    render = app.query_one("#render-pane", DocumentView)
+    for offset in range(0, 280, 8):
+        matches = list(app.query(TableEditor))
+        if matches:
+            return matches[0]
+        render.scroll_to(y=offset, animate=False)
+        await pilot.pause(0.1)
+    raise AssertionError("TableEditor was not mounted in the render viewport")
+
+
 def test_task_checkbox_click_rewrites_source(tmp_path: Path) -> None:
     source = Path("/home/vijay/Projects/folio/docs/example.folio")
     doc = tmp_path / "example.folio"
@@ -41,11 +63,10 @@ def test_run_py_materializes_live_table_widget(tmp_path: Path) -> None:
         app = FolioApp(doc)
         async with app.run_test(size=(140, 45)) as pilot:
             await pilot.pause(0.2)
-            app.query_one("#run-py-budget-check", Button).press()
+            (await _find_visible_button(app, pilot, "run-py-budget-check")).press()
             await pilot.pause(0.2)
-            tables = list(app.query(TableEditor))
-            assert len(tables) == 1
-            assert len(tables[0].rows) == 4
+            table = await _find_visible_table(app, pilot)
+            assert len(table.rows) == 4
 
     asyncio.run(scenario())
 
@@ -59,9 +80,9 @@ def test_table_edit_updates_document_text(tmp_path: Path) -> None:
         app = FolioApp(doc)
         async with app.run_test(size=(140, 45)) as pilot:
             await pilot.pause(0.2)
-            app.query_one("#run-py-budget-check", Button).press()
+            (await _find_visible_button(app, pilot, "run-py-budget-check")).press()
             await pilot.pause(0.2)
-            table = app.query_one(TableEditor)
+            table = await _find_visible_table(app, pilot)
             grid = table.query_one(DataTable)
             grid.move_cursor(row=0, column=2)
             grid.focus()
@@ -219,10 +240,44 @@ def test_large_document_shows_inline_advisory(tmp_path: Path) -> None:
         app = FolioApp(doc)
         async with app.run_test(size=(140, 45)) as pilot:
             await pilot.pause(0.2)
+            assert not list(app.query("#advisory-action-document-size-single-pane"))
             assert list(app.query("#advisory-action-document-size-dismiss"))
             await pilot.click("#advisory-action-document-size-dismiss")
             await pilot.pause(0.2)
             assert not list(app.query("#advisory-action-document-size-dismiss"))
+
+    asyncio.run(scenario())
+
+
+def test_large_document_advisory_can_toggle_single_pane(tmp_path: Path) -> None:
+    doc = tmp_path / "advisory-toggle.folio"
+    blocks = []
+    for index in range(16):
+        blocks.append(
+            "\n".join(
+                [
+                    f'::task[item-{index}]{{done="false" due="soon"}}',
+                    f"Task {index}",
+                    "::end",
+                    "",
+                ]
+            )
+        )
+    doc.write_text("\n".join(blocks), encoding="utf-8")
+
+    async def scenario() -> None:
+        app = FolioApp(doc)
+        async with app.run_test(size=(140, 45)) as pilot:
+            await pilot.pause(0.2)
+            assert app._single_pane_mode is True
+            await pilot.press("f6")
+            await pilot.pause(0.2)
+            assert app._single_pane_mode is False
+            assert list(app.query("#advisory-action-document-size-single-pane"))
+            await pilot.click("#advisory-action-document-size-single-pane")
+            await pilot.pause(0.2)
+            assert app._single_pane_mode is True
+            assert "document-size" in app._dismissed_advisories
 
     asyncio.run(scenario())
 
@@ -333,6 +388,44 @@ def test_contact_widget_edits_and_saves_vcard_file(tmp_path: Path) -> None:
     assert "EMAIL;TYPE=internet:sara@example.com" in updated
     assert "EMAIL;TYPE=internet:finance@example.com" in updated
     assert "NOTE:Budget owner" in updated
+
+
+def test_contact_widget_renders_and_saves_inline_contact_block(tmp_path: Path) -> None:
+    doc = tmp_path / "contacts-inline.folio"
+    doc.write_text(
+        "\n".join(
+            [
+                "::contact[sara.chen]",
+                "name = Sara Chen",
+                "email = sara@example.com",
+                "role = Head of Product",
+                "org = Example Ltd",
+                "phone = +44 7700 900123",
+                "notes = Met at ProductCon 2025.",
+                "::end",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    async def scenario() -> None:
+        app = FolioApp(doc)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.2)
+            widget = app.query_one(ContactWidget)
+            assert widget.inline_source is True
+            assert widget.contacts[0].full_name == "Sara Chen"
+            app.query_one("#contact-role-sara-chen", Input).value = "Chief Product Officer"
+            app.query_one("#contact-note-sara-chen", Input).value = "Prefers async communication."
+            app.query_one("#save-contact-sara-chen", Button).press()
+            await pilot.pause(0.3)
+
+    asyncio.run(scenario())
+
+    updated = doc.read_text(encoding="utf-8")
+    assert "role = Chief Product Officer" in updated
+    assert "notes = Prefers async communication." in updated
 
 
 def test_sh_run_writes_output_block_and_rerun_replaces_it(tmp_path: Path) -> None:

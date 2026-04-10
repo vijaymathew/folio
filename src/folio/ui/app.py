@@ -499,7 +499,8 @@ class FolioApp(App[None]):
     def save_contact(
         self,
         directive: Directive,
-        path: str,
+        path: str | None,
+        inline_source: bool,
         card_index: int,
         full_name: str,
         title: str,
@@ -510,6 +511,32 @@ class FolioApp(App[None]):
         addresses: list[str],
         note: str,
     ) -> None:
+        updated_card = ContactCard(
+            full_name=full_name or "Unnamed Contact",
+            emails=emails,
+            phones=phones,
+            organization=organization or None,
+            title=title or None,
+            role=role or None,
+            addresses=addresses,
+            note=note or None,
+            index=card_index,
+        )
+
+        if inline_source:
+            header = self._directive_header(directive.type, directive.id, dict(directive.params))
+            body = self.contact_reader.serialize_inline_card(updated_card)
+            new_text = "\n".join([header, *body, "::end"])
+            mutation = TextMutation(
+                kind="replace",
+                start_line=directive.start_line,
+                end_line=directive.end_line,
+                new_text=new_text,
+                source="contact.save",
+            )
+            self._apply_mutation(mutation, success_message=f"{directive.title()} saved into the document.")
+            return
+
         base_ctx = self._build_render_context(self.model)
         ctx = self.registry.context_for("contact", base_ctx)
         if ctx.file_access is None:
@@ -517,6 +544,9 @@ class FolioApp(App[None]):
             return
 
         try:
+            if path is None:
+                self.log_status(f"{directive.title()} save failed: missing contact path.", error=True)
+                return
             source_path = ctx.file_access.resolve_document_relative(path)
             cards = self.contact_reader.read_path(source_path, ctx.file_access)
             if not source_path.is_file():
@@ -528,14 +558,14 @@ class FolioApp(App[None]):
 
             original = cards[card_index]
             cards[card_index] = ContactCard(
-                full_name=full_name or original.full_name,
-                emails=emails,
-                phones=phones,
-                organization=organization or None,
-                title=title or None,
-                role=role or None,
-                addresses=addresses,
-                note=note or None,
+                full_name=updated_card.full_name or original.full_name,
+                emails=updated_card.emails,
+                phones=updated_card.phones,
+                organization=updated_card.organization,
+                title=updated_card.title,
+                role=updated_card.role,
+                addresses=updated_card.addresses,
+                note=updated_card.note,
                 source=original.source,
                 index=original.index,
             )
@@ -649,7 +679,9 @@ class FolioApp(App[None]):
         self._set_source_editor_text(updated_text)
         self._mark_source_dirty()
 
-    def toggle_single_pane(self) -> None:
+    def toggle_single_pane(self, advisory_id: str | None = None) -> None:
+        if advisory_id is not None:
+            self._dismissed_advisories.add(advisory_id)
         self._single_pane_mode = not self._single_pane_mode
         self._refresh_layout_binding()
         state = "single-pane" if self._single_pane_mode else "split-pane"
@@ -688,6 +720,9 @@ class FolioApp(App[None]):
         line_count = len(model.text.splitlines())
 
         if line_count >= 40 and "document-size" not in self._dismissed_advisories:
+            actions = [AdvisoryAction("dismiss", "dismiss", "advisory.dismiss")]
+            if not self._single_pane_mode:
+                actions.insert(0, AdvisoryAction("single-pane", "single pane", "ui.toggle_single_pane"))
             advisories.append(
                 AdvisorySpec(
                     id="document-size",
@@ -696,10 +731,7 @@ class FolioApp(App[None]):
                         f"This document has {line_count} lines ({len(model.directives)} directives). "
                         "Use single-pane mode or directive source toggles to reduce visual load."
                     ),
-                    actions=[
-                        AdvisoryAction("single-pane", "single pane", "ui.toggle_single_pane"),
-                        AdvisoryAction("dismiss", "dismiss", "advisory.dismiss"),
-                    ],
+                    actions=actions,
                     level="warning",
                 )
             )

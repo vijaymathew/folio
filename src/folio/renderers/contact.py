@@ -22,13 +22,23 @@ def _parse_int(raw: str | None, default: int) -> int:
 
 
 class ContactWidget(Vertical):
-    def __init__(self, directive: Directive, contacts: list[ContactCard], source_path: Path, limit: int, ctx: RenderContext) -> None:
+    def __init__(
+        self,
+        directive: Directive,
+        contacts: list[ContactCard],
+        source_path: Path | None,
+        limit: int,
+        ctx: RenderContext,
+        *,
+        inline_source: bool = False,
+    ) -> None:
         super().__init__(classes="contact-widget")
         self.directive = directive
         self.contacts = contacts
         self.source_path = source_path
         self.limit = limit
         self.ctx = ctx
+        self.inline_source = inline_source
         self.key_fragment = widget_id_fragment(directive.key())
         self.border_title = Text(directive.title())
 
@@ -38,7 +48,9 @@ class ContactWidget(Vertical):
 
     @property
     def editable_contact(self) -> ContactCard | None:
-        if self.source_path.is_file() and len(self.contacts) == 1:
+        if self.inline_source and len(self.contacts) == 1:
+            return self.contacts[0]
+        if self.source_path is not None and self.source_path.is_file() and len(self.contacts) == 1:
             return self.contacts[0]
         return None
 
@@ -49,7 +61,8 @@ class ContactWidget(Vertical):
             return
         editable_contact = self.editable_contact
         if editable_contact is not None:
-            yield Static("Edit fields and press Save to write the .vcf file.", classes="contact-status", markup=False)
+            save_target = "the document" if self.inline_source else "the .vcf file"
+            yield Static(f"Edit fields and press Save to write {save_target}.", classes="contact-status", markup=False)
             with Vertical(classes="contact-form"):
                 yield ContactField("Full name", "name", editable_contact.full_name, self.key_fragment)
                 yield ContactField("Title", "title", editable_contact.title or "", self.key_fragment)
@@ -66,10 +79,12 @@ class ContactWidget(Vertical):
             yield Static(self._contact_text(contact), classes="contact-card", markup=False)
         if len(self.contacts) > self.limit:
             yield Static(f"... {len(self.contacts) - self.limit} more contacts", classes="contact-more", markup=False)
-        if self.source_path.is_dir() or len(self.contacts) > 1:
+        if (self.source_path is not None and self.source_path.is_dir()) or len(self.contacts) > 1:
             yield Static("Editing is available for single-contact .vcf files.", classes="contact-status", markup=False)
 
     def _meta_text(self) -> str:
+        if self.inline_source:
+            return "inline contact record"
         count = len(self.contacts)
         noun = "contact" if count == 1 else "contacts"
         return f"vCard source: {self.source_path} ({count} {noun})"
@@ -101,7 +116,8 @@ class ContactWidget(Vertical):
         self.ctx.events.emit(
             "contact.save",
             directive=self.directive,
-            path=str(self.source_path),
+            path=str(self.source_path) if self.source_path is not None else None,
+            inline_source=self.inline_source,
             card_index=contact.index,
             full_name=self._input_value("name"),
             title=self._input_value("title"),
@@ -132,6 +148,10 @@ class ContactRenderer:
         self.reader = ContactReader()
 
     def render(self, directive: Directive, ctx: RenderContext) -> Static:
+        if directive.body:
+            contact = self.reader.parse_inline_body(directive.body)
+            return ContactWidget(directive, [contact], None, 1, ctx, inline_source=True)
+
         if ctx.file_access is None:
             return Static("Renderer capability denied: filesystem_read.", classes="contact-widget")
 

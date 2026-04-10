@@ -108,7 +108,7 @@ FORBIDDEN_NODES = (
 
 
 def _block_key(directive: Directive) -> str:
-    return directive.id or str(directive.start_line)
+    return directive.key()
 
 
 def _safe_error(message: str) -> str:

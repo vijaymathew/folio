@@ -42,7 +42,7 @@ class PyBlockWidget(Vertical):
 class PyRenderer:
     def render(self, directive: Directive, ctx: RenderContext) -> Static:
         code = "\n".join(directive.body) if directive.body else directive.header_line
-        key = directive.id or str(directive.start_line)
+        key = directive.key()
         run_mode = directive.params.get("run", '"manual"').strip('"')
         result = (ctx.py_results or {}).get(key)
         if result is None:

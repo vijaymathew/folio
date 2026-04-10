@@ -316,8 +316,7 @@ Status key:
 - `done` `DocumentStore` → `DirectiveParser`
 - `done` parser output → renderer registry / render loop
 - `done` renderers → mutation engine → updated text file
-- `partial` directive index
-  The parser emits directive/prose structures with ranges, but there is no separate indexed service.
+- `done` directive index
 - `partial` render engine abstraction
   The render loop exists, but it is embedded directly in the app rather than factored into its own engine/module.
 
@@ -356,8 +355,7 @@ Status key:
 
 - `done` cheap line-oriented parse
 - `done` extracts type, id, params, body, and source range
-- `partial` builds a directive index for rendering/mutation targeting
-  Parsed ranges are sufficient for targeting, but there is no separate reusable index object.
+- `done` builds a directive index for rendering/mutation targeting
 
 #### CapabilityRegistry
 

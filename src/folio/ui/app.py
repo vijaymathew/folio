@@ -238,11 +238,9 @@ class FolioApp(App[None]):
             update_table=self.update_table_directive,
             py_results=self.py_results,
             document_path=self.document_path,
-            directives_by_id={item.id: item for item in model.directives if item.id},
+            directives_by_id=model.directive_index.by_id,
         )
         prose_index = 0
-        directives = iter(model.directives)
-        current = next(directives, None)
 
         for line_no, line in enumerate(text.splitlines() or [""]):
             while prose_index < len(model.prose) and model.prose[prose_index].start_line == line_no:
@@ -250,11 +248,10 @@ class FolioApp(App[None]):
                 if any(part.strip() for part in block.lines):
                     render.mount(Static("\n".join(block.lines)))
                 prose_index += 1
-            while current and current.start_line == line_no:
+            for current in model.directive_index.directives_starting_at(line_no):
                 renderer = self.registry.create(current.type)
                 widget = renderer.render(current, ctx) if renderer else Static(current.header_line)
                 render.mount(widget)
-                current = next(directives, None)
 
         render.refresh(repaint=True, layout=True)
         self._log_autorun_results()
@@ -268,18 +265,10 @@ class FolioApp(App[None]):
             self.log_status("Source buffer modified. Press Ctrl+S to save and reparse.")
 
     def _find_directive(self, directive_type: str, target: str) -> Directive | None:
-        return next(
-            (
-                item
-                for item in self.model.directives
-                if item.type == directive_type
-                and str(item.id or item.start_line) == target
-            ),
-            None,
-        )
+        return self.model.directive_index.find(directive_type, target)
 
     def _py_directives(self) -> list[Directive]:
-        return [item for item in self.model.directives if item.type == "py"]
+        return self.model.directive_index.directives_of_type("py")
 
     def _run_autorun_blocks(self) -> dict[str, object]:
         directives = self._py_directives()
@@ -289,7 +278,7 @@ class FolioApp(App[None]):
 
     def run_py_block(self, directive: Directive) -> None:
         self.log_status(f"Running {directive.title()} in subprocess worker.")
-        key = directive.id or str(directive.start_line)
+        key = directive.key()
         results = self.py_worker.run_document(
             self._py_directives(),
             trigger_key=key,
@@ -320,11 +309,9 @@ class FolioApp(App[None]):
             update_table=self.update_table_directive,
             py_results=self.py_results,
             document_path=self.document_path,
-            directives_by_id={item.id: item for item in model.directives if item.id},
+            directives_by_id=model.directive_index.by_id,
         )
         prose_index = 0
-        directives = iter(model.directives)
-        current = next(directives, None)
 
         for line_no, _line in enumerate(text.splitlines() or [""]):
             while prose_index < len(model.prose) and model.prose[prose_index].start_line == line_no:
@@ -332,11 +319,10 @@ class FolioApp(App[None]):
                 if any(part.strip() for part in block.lines):
                     render.mount(Static("\n".join(block.lines)))
                 prose_index += 1
-            while current and current.start_line == line_no:
+            for current in model.directive_index.directives_starting_at(line_no):
                 renderer = self.registry.create(current.type)
                 widget = renderer.render(current, ctx) if renderer else Static(current.header_line)
                 render.mount(widget)
-                current = next(directives, None)
 
         render.refresh(repaint=True, layout=True)
 

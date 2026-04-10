@@ -39,7 +39,7 @@ class TableEditor(Vertical):
 
     def compose(self) -> ComposeResult:
         yield Static(self.directive.title(), classes="table-title")
-        yield DataTable(id=f"table-grid-{self.directive.id or self.directive.start_line}")
+        yield DataTable(id=f"table-grid-{self.directive.key()}")
         yield Static("Select a cell to edit.", id="table-edit-status")
         with Horizontal(classes="table-editor-input-row"):
             yield Input(placeholder="New cell value", id="table-edit-input")

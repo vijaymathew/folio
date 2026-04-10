@@ -1,6 +1,6 @@
 # Folio
 
-![Folio logo](../vijaymathew.github.io/folio/logo.svg)
+![Folio logo](docs/assets/logo.svg)
 
 **Folio** is a CLI-based prototype for a text-native architecture where **the document is the computer**. 
 

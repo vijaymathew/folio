@@ -414,8 +414,7 @@ Status key:
 - `done` load document text
 - `done` parse into directives and prose spans
 - `done` build a mixed render tree
-- `not started` render only the visible window plus a small margin
-  Current app rerenders the full document.
+- `done` render only the visible window plus a small margin
 - `partial` emit semantic event → convert to mutation → apply → reparse → rerender
   The overall loop exists, but event routing is still somewhat direct and app-driven.
 

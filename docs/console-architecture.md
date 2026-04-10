@@ -317,8 +317,7 @@ Status key:
 - `done` parser output → renderer registry / render loop
 - `done` renderers → mutation engine → updated text file
 - `done` directive index
-- `partial` render engine abstraction
-  The render loop exists, but it is embedded directly in the app rather than factored into its own engine/module.
+- `done` render engine abstraction
 
 ### Core Modules
 
@@ -330,7 +329,7 @@ Status key:
   The bus exists, but the app mostly calls mutation methods directly instead of routing through it.
 - `done` `models.py`
 - `done` `ui/App.py`
-- `not started` `ui/DocumentView.py`
+- `done` `ui/DocumentView.py`
 - `not started` `ui/SourcePane.py`
 - `not started` `ui/MutationLog.py`
 - `done` `renderers/base.py`

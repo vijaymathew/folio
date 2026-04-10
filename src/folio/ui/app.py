@@ -20,6 +20,7 @@ from folio.renderers.note import NoteRenderer
 from folio.renderers.py import PyRenderer
 from folio.renderers.table import TableRenderer
 from folio.renderers.task import TaskRenderer
+from folio.ui.document_view import DocumentView
 
 
 class FolioApp(App[None]):
@@ -196,7 +197,7 @@ class FolioApp(App[None]):
                     soft_wrap=False,
                     show_line_numbers=True,
                 )
-            yield VerticalScroll(id="render-pane")
+            yield DocumentView(id="render-pane")
         yield VerticalScroll(id="status-pane")
         yield Footer()
 
@@ -228,10 +229,6 @@ class FolioApp(App[None]):
         self._source_dirty = False
         self._set_source_title()
 
-        render = self.query_one("#render-pane", VerticalScroll)
-        render.remove_children()
-        render.mount(Static("Rendered", classes="pane-title"))
-
         ctx = RenderContext(
             toggle_task=self.toggle_task,
             run_py=self.run_py_block,
@@ -240,20 +237,8 @@ class FolioApp(App[None]):
             document_path=self.document_path,
             directives_by_id=model.directive_index.by_id,
         )
-        prose_index = 0
-
-        for line_no, line in enumerate(text.splitlines() or [""]):
-            while prose_index < len(model.prose) and model.prose[prose_index].start_line == line_no:
-                block = model.prose[prose_index]
-                if any(part.strip() for part in block.lines):
-                    render.mount(Static("\n".join(block.lines)))
-                prose_index += 1
-            for current in model.directive_index.directives_starting_at(line_no):
-                renderer = self.registry.create(current.type)
-                widget = renderer.render(current, ctx) if renderer else Static(current.header_line)
-                render.mount(widget)
-
-        render.refresh(repaint=True, layout=True)
+        render = self.query_one("#render-pane", DocumentView)
+        render.render_document(model, self.registry, ctx)
         self._log_autorun_results()
 
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
@@ -296,12 +281,7 @@ class FolioApp(App[None]):
         self.reload_render_pane()
 
     def reload_render_pane(self) -> None:
-        text = self.store.get_text()
         model = self.model
-
-        render = self.query_one("#render-pane", VerticalScroll)
-        render.remove_children()
-        render.mount(Static("Rendered", classes="pane-title"))
 
         ctx = RenderContext(
             toggle_task=self.toggle_task,
@@ -311,20 +291,8 @@ class FolioApp(App[None]):
             document_path=self.document_path,
             directives_by_id=model.directive_index.by_id,
         )
-        prose_index = 0
-
-        for line_no, _line in enumerate(text.splitlines() or [""]):
-            while prose_index < len(model.prose) and model.prose[prose_index].start_line == line_no:
-                block = model.prose[prose_index]
-                if any(part.strip() for part in block.lines):
-                    render.mount(Static("\n".join(block.lines)))
-                prose_index += 1
-            for current in model.directive_index.directives_starting_at(line_no):
-                renderer = self.registry.create(current.type)
-                widget = renderer.render(current, ctx) if renderer else Static(current.header_line)
-                render.mount(widget)
-
-        render.refresh(repaint=True, layout=True)
+        render = self.query_one("#render-pane", DocumentView)
+        render.render_document(model, self.registry, ctx)
 
     def toggle_task(self, directive: Directive) -> None:
         done = directive.params.get("done", '"false"').strip('"').lower() == "true"

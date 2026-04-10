@@ -134,5 +134,6 @@ On save, Folio:
 
 ## Project Documentation
 
+- [User Manual](docs/user-manual.md)
 - [Renderer & Registry Authoring](docs/renderer-interface.md)
 - [Example .folio File](docs/example.folio)

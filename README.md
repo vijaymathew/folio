@@ -15,7 +15,19 @@ This is intentionally small. It is a starting point for validating the text-firs
 
 Renderer and registry authoring notes live in [docs/renderer-interface.md](/home/vijay/Projects/folio/docs/renderer-interface.md).
 
-## Run
+## Installation
+
+To install Folio globally on your system:
+
+```bash
+bash install.sh
+```
+
+This will set up an isolated environment in `~/.local/share/folio` and add the `folio` command to your `~/.local/bin`.
+
+## Run (Development)
+
+For local development or to run without installing:
 
 ```bash
 python -m venv .venv

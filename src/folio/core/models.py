@@ -109,3 +109,22 @@ class PyBlockResult:
     error: str | None
     context: dict[str, object] = field(default_factory=dict)
     table: list[dict[str, object]] | None = None
+
+
+@dataclass(slots=True)
+class WebLink:
+    index: int
+    text: str
+    url: str
+
+
+@dataclass(slots=True)
+class WebPageResult:
+    key: str
+    status: str
+    url: str
+    title: str
+    content: str
+    error: str | None = None
+    links: list[WebLink] = field(default_factory=list)
+    content_type: str = "text/plain"

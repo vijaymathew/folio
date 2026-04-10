@@ -8,7 +8,7 @@ from typing import Protocol
 from textual.widget import Widget
 
 from folio.core.events import EventBus
-from folio.core.models import Directive, PyBlockResult
+from folio.core.models import Directive, PyBlockResult, WebPageResult
 
 
 @dataclass(slots=True)
@@ -84,6 +84,7 @@ class RendererFileAccess:
 class RenderContext:
     events: EventBus | None = None
     py_results: dict[str, PyBlockResult] | None = None
+    web_results: dict[str, WebPageResult] | None = None
     document_path: Path | None = None
     file_access: RendererFileAccess | None = None
     source_text: str | None = None
@@ -112,6 +113,7 @@ class ActionSpec:
 class CapabilitySpec:
     events: bool = False
     py_results: bool = False
+    web_results: bool = False
     document_path: bool = False
     source_text: bool = False
     directive_lookup: bool = False
@@ -124,6 +126,9 @@ class SandboxSpec:
     network: bool = False
     storage: bool = False
     document_text: bool = False
+    allowed_origins: list[str] = field(default_factory=list)
+    max_fetch_bytes: int = 262144
+    timeout_seconds: float = 5.0
     notes: str = ""
 
 

@@ -1,0 +1,47 @@
+[renderer]
+directive_type = "web"
+display_name = "Web"
+description = "Text-only reader for web pages."
+version = "1.0.0"
+supports_inline_source = true
+supports_editing = false
+
+[[params]]
+name = "url"
+description = "Optional explicit URL when the directive id is not the URL."
+
+[[params]]
+name = "load"
+default = "\"auto\""
+description = "Whether to fetch on document load or only when Reload is pressed."
+
+[[params]]
+name = "view"
+default = "\"reader\""
+description = "Reader mode. Only \"reader\" is currently supported."
+
+[[params]]
+name = "lines"
+default = "40"
+description = "Maximum number of rendered content lines before truncation."
+
+[[actions]]
+name = "web.reload"
+description = "Fetch this page again and refresh the text-only reader view."
+
+[actions.payload_schema]
+directive = "Directive"
+
+[capabilities]
+events = true
+web_results = true
+
+[sandbox]
+execution_mode = "service"
+network = true
+storage = false
+document_text = false
+allowed_origins = ["*"]
+max_fetch_bytes = 262144
+timeout_seconds = 5.0
+notes = "Network access goes through the app-level text reader service. Only HTTP and HTTPS are supported."

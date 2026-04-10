@@ -15,6 +15,7 @@ from folio.core.mutations import MutationEngine
 from folio.core.parser import DirectiveParser
 from folio.core.registry import CapabilityRegistry
 from folio.core.store import DocumentConflictError, DocumentStore
+from folio.core.web_reader import WebReader, resolve_web_url
 from folio.python.worker import PyWorker
 from folio.renderers.base import AdvisoryAction, AdvisorySpec, RenderContext
 from folio.renderers.file import FileRenderer
@@ -22,6 +23,7 @@ from folio.renderers.note import NoteRenderer
 from folio.renderers.py import PyRenderer
 from folio.renderers.table import TableRenderer
 from folio.renderers.task import TaskRenderer
+from folio.renderers.web import WebRenderer
 from folio.ui.document_view import DocumentView
 
 
@@ -142,6 +144,26 @@ class FolioApp(App[None]):
     .note-content {
       height: auto;
     }
+    .web-widget {
+      height: auto;
+      border: round $surface-lighten-1;
+      padding: 1;
+      margin-bottom: 1;
+    }
+    .web-toolbar {
+      height: auto;
+      margin-bottom: 1;
+    }
+    .web-meta {
+      width: 1fr;
+      color: $text-muted;
+    }
+    .web-reload {
+      width: 12;
+    }
+    .web-content {
+      height: auto;
+    }
     .directive-container {
       height: auto;
       margin-bottom: 1;
@@ -208,7 +230,9 @@ class FolioApp(App[None]):
         self.registry = CapabilityRegistry()
         self.model = DocumentModel(text="")
         self.py_worker = PyWorker()
+        self.web_reader = WebReader()
         self.py_results = {}
+        self.web_results = {}
         self._loading_source = False
         self._source_dirty = False
         self._single_pane_mode = True
@@ -224,6 +248,7 @@ class FolioApp(App[None]):
         self.registry.register(TableRenderer)
         self.registry.register(NoteRenderer)
         self.registry.register(FileRenderer)
+        self.registry.register(WebRenderer)
 
     def _subscribe_events(self) -> None:
         self.events.subscribe("task.toggle", self.toggle_task)
@@ -231,6 +256,7 @@ class FolioApp(App[None]):
         self.events.subscribe("table.edit", self.update_table_directive)
         self.events.subscribe("directive.toggle_view", self.toggle_directive_view)
         self.events.subscribe("directive.source_edit", self.update_directive_source_buffer)
+        self.events.subscribe("web.reload", self.reload_web_directive)
         self.events.subscribe("ui.toggle_single_pane", self.toggle_single_pane)
         self.events.subscribe("advisory.dismiss", self.dismiss_advisory)
         self.events.subscribe("document.reload", self.handle_reload_request)
@@ -273,6 +299,7 @@ class FolioApp(App[None]):
         model = self.parser.parse(text)
         self.model = model
         self.py_results = self._run_autorun_blocks()
+        self.web_results = self._run_web_autofetch(model)
 
         editor = self.query_one("#source-editor", TextArea)
         self._set_source_editor_text(text)
@@ -302,6 +329,17 @@ class FolioApp(App[None]):
             return {}
         return self.py_worker.run_document(directives, autorun_only=True)
 
+    def _web_directives(self) -> list[Directive]:
+        return self.model.directive_index.directives_of_type("web")
+
+    def _run_web_autofetch(self, model: DocumentModel) -> dict[str, object]:
+        results: dict[str, object] = {}
+        for directive in model.directive_index.directives_of_type("web"):
+            load_mode = directive.params.get("load", '"auto"').strip('"')
+            if load_mode != "manual":
+                results[directive.key()] = self._fetch_web_directive(directive)
+        return results
+
     def run_py_block(self, directive: Directive) -> None:
         self.log_status(f"Running {directive.title()} in subprocess worker.")
         key = directive.key()
@@ -319,6 +357,16 @@ class FolioApp(App[None]):
                 self.log_status(f"{directive.title()} completed successfully ({summary}).")
             else:
                 self.log_status(f"{directive.title()} failed: {result.error}", error=True)
+        self.reload_render_pane()
+
+    def reload_web_directive(self, directive: Directive) -> None:
+        self.log_status(f"Fetching {directive.title()} in text-only reader.")
+        result = self._fetch_web_directive(directive)
+        self.web_results[directive.key()] = result
+        if result.status == "ok":
+            self.log_status(f"{directive.title()} fetched successfully from {result.url}.")
+        else:
+            self.log_status(f"{directive.title()} failed: {result.error}", error=True)
         self.reload_render_pane()
 
     def reload_render_pane(self) -> None:
@@ -483,6 +531,7 @@ class FolioApp(App[None]):
         return RenderContext(
             events=self.events,
             py_results=self.py_results,
+            web_results=self.web_results,
             document_path=self.document_path,
             source_text=editor.text,
             directives_by_id=model.directive_index.by_id,
@@ -577,6 +626,20 @@ class FolioApp(App[None]):
 
     def _layout_binding_description(self) -> str:
         return "Split Pane" if self._single_pane_mode else "Single Pane"
+
+    def _fetch_web_directive(self, directive: Directive):
+        manifest = self.registry.manifest_for("web")
+        url = resolve_web_url(directive.id or directive.params.get("url", '"unknown"'))
+        allowed_origins = manifest.sandbox.allowed_origins if manifest is not None else ["*"]
+        max_fetch_bytes = manifest.sandbox.max_fetch_bytes if manifest is not None else 262144
+        timeout_seconds = manifest.sandbox.timeout_seconds if manifest is not None else 5.0
+        return self.web_reader.fetch(
+            directive.key(),
+            url,
+            allowed_origins=allowed_origins,
+            max_fetch_bytes=max_fetch_bytes,
+            timeout_seconds=timeout_seconds,
+        )
 
     def _refresh_layout_binding(self) -> None:
         description = self._layout_binding_description()

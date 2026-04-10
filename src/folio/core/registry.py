@@ -65,6 +65,7 @@ class CapabilityRegistry:
         return RenderContext(
             events=base_ctx.events if caps.events else None,
             py_results=base_ctx.py_results if caps.py_results else None,
+            web_results=base_ctx.web_results if caps.web_results else None,
             document_path=base_ctx.document_path if caps.document_path else None,
             file_access=RendererFileAccess(base_ctx.document_path) if caps.filesystem_read else None,
             source_text=base_ctx.source_text if caps.source_text else None,
@@ -92,6 +93,7 @@ class CapabilityRegistry:
             capabilities=CapabilitySpec(
                 events=bool(capabilities.get("events", False)),
                 py_results=bool(capabilities.get("py_results", False)),
+                web_results=bool(capabilities.get("web_results", False)),
                 document_path=bool(capabilities.get("document_path", False)),
                 source_text=bool(capabilities.get("source_text", False)),
                 directive_lookup=bool(capabilities.get("directive_lookup", False)),
@@ -102,6 +104,9 @@ class CapabilityRegistry:
                 network=bool(sandbox.get("network", False)),
                 storage=bool(sandbox.get("storage", False)),
                 document_text=bool(sandbox.get("document_text", False)),
+                allowed_origins=[str(item) for item in sandbox.get("allowed_origins", [])],
+                max_fetch_bytes=int(sandbox.get("max_fetch_bytes", 262144)),
+                timeout_seconds=float(sandbox.get("timeout_seconds", 5.0)),
                 notes=str(sandbox.get("notes", "")),
             ),
             supports_inline_source=bool(renderer.get("supports_inline_source", False)),

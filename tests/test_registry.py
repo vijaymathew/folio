@@ -9,11 +9,12 @@ from folio.renderers.note import NoteRenderer
 from folio.renderers.py import PyRenderer
 from folio.renderers.table import TableRenderer
 from folio.renderers.task import TaskRenderer
+from folio.renderers.web import WebRenderer
 
 
 def _registry() -> CapabilityRegistry:
     registry = CapabilityRegistry()
-    for renderer in (TaskRenderer, PyRenderer, TableRenderer, NoteRenderer, FileRenderer):
+    for renderer in (TaskRenderer, PyRenderer, TableRenderer, NoteRenderer, FileRenderer, WebRenderer):
         registry.register(renderer)
     return registry
 
@@ -21,7 +22,7 @@ def _registry() -> CapabilityRegistry:
 def test_registry_exposes_supported_types_and_manifests() -> None:
     registry = _registry()
 
-    assert registry.supported_types() == ["file", "note", "py", "table", "task"]
+    assert registry.supported_types() == ["file", "note", "py", "table", "task", "web"]
     assert registry.manifest_for("task") is TaskRenderer.manifest
     assert registry.manifest_for("py") is PyRenderer.manifest
     assert registry.manifest_for("task").manifest_path == TaskRenderer.manifest_path
@@ -64,6 +65,7 @@ def test_registry_filters_render_context_by_declared_capabilities(tmp_path: Path
     base_ctx = RenderContext(
         events=object(),  # type: ignore[arg-type]
         py_results={"budget-check": object()},  # type: ignore[dict-item]
+        web_results={"https://example.com": object()},  # type: ignore[dict-item]
         document_path=tmp_path / "example.folio",
         source_text="hidden",
         directives_by_id={"call-finance": object()},  # type: ignore[dict-item]
@@ -82,3 +84,9 @@ def test_registry_filters_render_context_by_declared_capabilities(tmp_path: Path
     assert file_ctx.events is None
     assert file_ctx.py_results is None
     assert file_ctx.directives_by_id is None
+
+    web_ctx = registry.context_for("web", base_ctx)
+    assert web_ctx.web_results == base_ctx.web_results
+    assert web_ctx.events is base_ctx.events
+    assert web_ctx.py_results is None
+    assert web_ctx.file_access is None

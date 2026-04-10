@@ -50,8 +50,9 @@ Only document-owned state is in scope for this scaffold:
 - `::table`
 - `::note`
 - `::file`
+- `::web` as an experimental text-only reader
 
-Remote backends are intentionally excluded from this first cut.
+Remote backends are otherwise intentionally excluded from this first cut.
 
 ## Renderer Manifests
 

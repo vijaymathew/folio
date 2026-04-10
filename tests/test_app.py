@@ -4,6 +4,7 @@ import asyncio
 import shutil
 from pathlib import Path
 
+from folio.core.models import WebLink, WebPageResult
 from folio.renderers.base import widget_id_fragment
 from folio.renderers.table import TableEditor
 from folio.ui.document_view import DocumentView
@@ -221,5 +222,39 @@ def test_large_document_shows_inline_advisory(tmp_path: Path) -> None:
             await pilot.click("#advisory-action-document-size-dismiss")
             await pilot.pause(0.2)
             assert not list(app.query("#advisory-action-document-size-dismiss"))
+
+    asyncio.run(scenario())
+
+
+def test_web_reader_fetches_text_only_page(tmp_path: Path) -> None:
+    doc = tmp_path / "web.folio"
+    url = "https://example.test/article"
+    doc.write_text(f'::web[{url}]{{load="manual" lines="20"}}\n', encoding="utf-8")
+
+    async def scenario() -> None:
+        app = FolioApp(doc)
+        app.web_reader.fetch = lambda key, requested_url, **kwargs: WebPageResult(
+            key=key,
+            status="ok",
+            url=requested_url,
+            title="Example article",
+            content="Launch Notes\n\nThis is the first paragraph of the article.",
+            links=[WebLink(index=1, text="documentation", url="https://example.test/docs")],
+            content_type="text/html",
+        )
+        async with app.run_test(size=(140, 45)) as pilot:
+            await pilot.pause(0.2)
+            reload_button = next(
+                button for button in app.query(Button) if button.id and button.id.startswith("reload-web-")
+            )
+            reload_button.press()
+            await pilot.pause(0.3)
+
+            result = app.web_results[url]
+            assert result.status == "ok"
+            assert result.title == "Example article"
+            assert "Launch Notes" in result.content
+            assert len(result.links) == 1
+            assert result.links[0].url.endswith("/docs")
 
     asyncio.run(scenario())

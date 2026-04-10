@@ -22,6 +22,13 @@ pip install -e .
 folio docs/example.folio
 ```
 
+## Tests
+
+```bash
+pip install -e ".[dev]"
+pytest
+```
+
 ## Controls
 
 - `q`: quit

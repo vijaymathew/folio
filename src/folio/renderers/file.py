@@ -8,7 +8,7 @@ from textual.containers import Vertical
 from textual.widgets import Static
 
 from folio.core.models import Directive
-from folio.renderers.base import RenderContext
+from folio.renderers.base import ParamSpec, RenderContext, RendererManifest
 
 
 def _parse_int(raw: str | None, default: int) -> int:
@@ -71,6 +71,19 @@ class FileWidget(Vertical):
 
 
 class FileRenderer:
+    manifest = RendererManifest(
+        directive_type="file",
+        display_name="File",
+        description="Local file preview and directory listing renderer.",
+        params=[
+            ParamSpec("path", description="Optional explicit path when the directive id is not the path."),
+            ParamSpec("preview", default='"auto"', description='Preview mode, currently "auto" or "text".'),
+            ParamSpec("lines", default="20", description="Maximum number of preview lines or directory entries."),
+        ],
+        supports_inline_source=True,
+        supports_editing=False,
+    )
+
     def render(self, directive: Directive, ctx: RenderContext) -> Static:
         raw_path = directive.id or directive.params.get("path", '"unknown"').strip('"')
         preview = directive.params.get("preview", '"auto"').strip('"')

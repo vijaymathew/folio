@@ -166,11 +166,11 @@ class FolioApp(App[None]):
         self._register_renderers()
 
     def _register_renderers(self) -> None:
-        self.registry.register("task", TaskRenderer)
-        self.registry.register("py", PyRenderer)
-        self.registry.register("table", TableRenderer)
-        self.registry.register("note", NoteRenderer)
-        self.registry.register("file", FileRenderer)
+        self.registry.register(TaskRenderer)
+        self.registry.register(PyRenderer)
+        self.registry.register(TableRenderer)
+        self.registry.register(NoteRenderer)
+        self.registry.register(FileRenderer)
 
     def _subscribe_events(self) -> None:
         self.events.subscribe("task.toggle", self.toggle_task)

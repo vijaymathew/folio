@@ -11,7 +11,7 @@ from textual.coordinate import Coordinate
 from textual.widgets import DataTable, Static
 
 from folio.core.models import Directive
-from folio.renderers.base import RenderContext
+from folio.renderers.base import ActionSpec, ParamSpec, RenderContext, RendererManifest
 
 
 def _coerce_value(raw: str) -> object:
@@ -222,6 +222,29 @@ class TableEditor(Vertical):
 
 
 class TableRenderer:
+    manifest = RendererManifest(
+        directive_type="table",
+        display_name="Table",
+        description="Structured table renderer with direct in-cell editing.",
+        params=[
+            ParamSpec("source", description="Source ::py block key for structured rows."),
+            ParamSpec("editable", default='"false"', description="Whether the table can be edited."),
+            ParamSpec("sortable", default='"false"', description="Reserved flag for table sorting support."),
+        ],
+        actions=[
+            ActionSpec(
+                "table.edit",
+                "Commit an edited table back to document text.",
+                {
+                    "directive": "Directive",
+                    "rows": "list[dict[str, object]]",
+                },
+            )
+        ],
+        supports_inline_source=True,
+        supports_editing=True,
+    )
+
     def render(self, directive: Directive, ctx: RenderContext) -> Static:
         rows = self._rows_from_directive(directive)
         if rows is None:

@@ -13,6 +13,8 @@ Minimal Textual scaffold for a console-first Folio prototype.
 
 This is intentionally small. It is a starting point for validating the text-first architecture in a console renderer.
 
+Renderer and registry authoring notes live in [docs/renderer-interface.md](/home/vijay/Projects/folio/docs/renderer-interface.md).
+
 ## Run
 
 ```bash

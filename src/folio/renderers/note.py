@@ -9,7 +9,7 @@ from textual.containers import Vertical
 from textual.widgets import Static
 
 from folio.core.models import Directive
-from folio.renderers.base import RenderContext
+from folio.renderers.base import ParamSpec, RenderContext, RendererManifest
 
 
 def _slug(text: str) -> str:
@@ -44,6 +44,18 @@ class NoteWidget(Vertical):
 
 
 class NoteRenderer:
+    manifest = RendererManifest(
+        directive_type="note",
+        display_name="Note",
+        description="Inline transclusion renderer for local note sections.",
+        params=[
+            ParamSpec("path", description="Optional explicit path to the source note."),
+            ParamSpec("section", default='"full"', description="Heading section to extract."),
+        ],
+        supports_inline_source=True,
+        supports_editing=False,
+    )
+
     def render(self, directive: Directive, ctx: RenderContext) -> Static:
         section = directive.params.get("section", '"full"').strip('"')
         source_path = self._resolve_source_path(directive, ctx)

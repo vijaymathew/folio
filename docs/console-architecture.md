@@ -98,8 +98,9 @@ folio/
 ### DocumentStore
 
 - Loads and saves the text file.
-- Tracks the current revision in memory.
+- Tracks the current loaded/saved file state in memory for overwrite safety.
 - Exposes line/range-based replacement operations.
+- Leaves version history, rollback, and branching to external tools such as `git`.
 
 ### DirectiveParser
 
@@ -344,10 +345,17 @@ Status key:
 #### DocumentStore
 
 - `done` loads and saves the text file
-- `partial` tracks current revision in memory
-  It caches current text, but does not manage explicit revision ids or history.
+- `partial` tracks current loaded/saved file state in memory
+  It caches current text, but does not yet surface explicit external-change detection on save.
 - `not started` exposes line/range replacement operations directly
   Range replacement currently lives in `MutationEngine`.
+
+#### Version History
+
+- `done` version management is treated as an external concern
+  Folio relies on the document file as the source of truth and expects tools such as `git` to provide history, diffs, rollback, and branching.
+- `partial` overwrite safety remains an internal concern
+  `DocumentStore` should still detect when the on-disk file changed since load before saving over it.
 
 #### DirectiveParser
 
@@ -358,7 +366,7 @@ Status key:
 #### CapabilityRegistry
 
 - `done` maps directive types to renderer implementations
-- `not started` exposes renderer manifests / capability declarations
+- `done` exposes renderer manifests / capability declarations
 - `done` allows partial rendering when a directive type is unsupported
   Unknown directives fall back to raw header text.
 

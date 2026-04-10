@@ -6,7 +6,7 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Static
 
 from folio.core.models import Directive
-from folio.renderers.base import RenderContext
+from folio.renderers.base import ActionSpec, ParamSpec, RenderContext, RendererManifest
 
 
 def _bool_param(value: str | None) -> bool:
@@ -74,5 +74,27 @@ class TaskWidget(Vertical):
 
 
 class TaskRenderer:
+    manifest = RendererManifest(
+        directive_type="task",
+        display_name="Task",
+        description="Checkbox task widget with due dates and dependency metadata.",
+        params=[
+            ParamSpec("done", default='"false"', description="Whether the task is completed."),
+            ParamSpec("due", description="Due date or due label."),
+            ParamSpec("priority", description="Priority label shown in task metadata."),
+            ParamSpec("blocked-by", description="Directive id of the blocking task."),
+            ParamSpec("completed", description="Completion timestamp or label."),
+        ],
+        actions=[
+            ActionSpec(
+                "task.toggle",
+                "Toggle task completion.",
+                {"directive": "Directive"},
+            )
+        ],
+        supports_inline_source=True,
+        supports_editing=True,
+    )
+
     def render(self, directive: Directive, ctx: RenderContext) -> Static:
         return TaskWidget(directive, ctx)

@@ -176,6 +176,7 @@ class FolioApp(App[None]):
         self.py_results = {}
         self._loading_source = False
         self._source_dirty = False
+        self._subscribe_events()
         self._register_renderers()
 
     def _register_renderers(self) -> None:
@@ -184,6 +185,11 @@ class FolioApp(App[None]):
         self.registry.register("table", TableRenderer)
         self.registry.register("note", NoteRenderer)
         self.registry.register("file", FileRenderer)
+
+    def _subscribe_events(self) -> None:
+        self.events.subscribe("task.toggle", self.toggle_task)
+        self.events.subscribe("py.run", self.run_py_block)
+        self.events.subscribe("table.edit", self.update_table_directive)
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -230,9 +236,7 @@ class FolioApp(App[None]):
         self._set_source_title()
 
         ctx = RenderContext(
-            toggle_task=self.toggle_task,
-            run_py=self.run_py_block,
-            update_table=self.update_table_directive,
+            events=self.events,
             py_results=self.py_results,
             document_path=self.document_path,
             directives_by_id=model.directive_index.by_id,
@@ -284,9 +288,7 @@ class FolioApp(App[None]):
         model = self.model
 
         ctx = RenderContext(
-            toggle_task=self.toggle_task,
-            run_py=self.run_py_block,
-            update_table=self.update_table_directive,
+            events=self.events,
             py_results=self.py_results,
             document_path=self.document_path,
             directives_by_id=model.directive_index.by_id,

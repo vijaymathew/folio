@@ -325,8 +325,7 @@ Status key:
 - `done` `DirectiveParser`
 - `done` `CapabilityRegistry`
 - `done` `MutationEngine`
-- `partial` `EventBus`
-  The bus exists, but the app mostly calls mutation methods directly instead of routing through it.
+- `done` `EventBus`
 - `done` `models.py`
 - `done` `ui/App.py`
 - `done` `ui/DocumentView.py`
@@ -372,16 +371,15 @@ Status key:
 
 #### EventBus
 
-- `partial` exists
-- `not started` serves as the main connection between renderers and mutation layer
-- `partial` helps keep some UI concerns separated, but is not central to the runtime
+- `done` exists
+- `done` serves as the main connection between renderers and mutation layer
+- `done` keeps UI concerns separated from mutation handling
 
 #### Renderers
 
 - `done` receive parsed directives plus context
 - `done` return Textual widgets
-- `partial` emit semantic actions rather than direct file edits
-  This is true for `task` and `py`; `table` still invokes the mutation callback more directly.
+- `done` emit semantic actions rather than direct file edits
 
 ### UI Layout
 

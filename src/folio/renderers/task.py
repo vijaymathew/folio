@@ -39,8 +39,8 @@ class TaskWidget(Vertical):
             yield Static("\n".join(self.notes), classes="task-notes", markup=False)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == self.button_id and self.ctx.toggle_task is not None:
-            self.ctx.toggle_task(self.directive)
+        if event.button.id == self.button_id and self.ctx.events is not None:
+            self.ctx.events.emit("task.toggle", directive=self.directive)
             event.stop()
 
     def _meta_text(self) -> str:

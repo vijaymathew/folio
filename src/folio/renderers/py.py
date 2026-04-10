@@ -34,8 +34,8 @@ class PyBlockWidget(Vertical):
         yield Static(self.output, classes="py-output", markup=False)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == f"run-py-{self.key}" and self.ctx.run_py is not None:
-            self.ctx.run_py(self.directive)
+        if event.button.id == f"run-py-{self.key}" and self.ctx.events is not None:
+            self.ctx.events.emit("py.run", directive=self.directive)
             event.stop()
 
 

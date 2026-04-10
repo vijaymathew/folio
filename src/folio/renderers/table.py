@@ -80,7 +80,7 @@ class TableEditor(Vertical):
             self._apply_edit()
 
     def _apply_edit(self) -> None:
-        if self.ctx.update_table is None:
+        if self.ctx.events is None:
             return
         if self.selected is None:
             table = self.query_one(DataTable)
@@ -91,7 +91,11 @@ class TableEditor(Vertical):
         column = self.columns[column_index]
         raw = self.query_one("#table-edit-input", Input).value
         self.rows[row_index][column] = _coerce_value(raw)
-        self.ctx.update_table(self.directive, deepcopy(self.rows))
+        self.ctx.events.emit(
+            "table.edit",
+            directive=self.directive,
+            rows=deepcopy(self.rows),
+        )
 
     def _collect_columns(self, rows: list[dict[str, object]]) -> list[str]:
         columns: list[str] = []

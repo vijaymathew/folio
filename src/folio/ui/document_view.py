@@ -301,12 +301,30 @@ class DocumentView(VerticalScroll):
                 output_lines = max(1, len((result.error or "").splitlines()) or 1)
             return code_lines + output_lines + (1 if run_mode == "manual" else 0) + 4
 
+        if directive.type == "sh":
+            return 4
+
+        if directive.type == "sh-output":
+            body_lines = max(1, len(directive.body) or 1)
+            return body_lines + 3
+
         if directive.type == "table":
             rows = self._table_row_count(directive, ctx)
             return max(source_lines, rows + 5)
 
         if directive.type == "file":
             return max(source_lines, self._preview_lines(directive) + 4)
+
+        if directive.type == "contact":
+            limit = self._limit_lines(directive, default=6)
+            return max(source_lines, 4 + (limit * 5))
+
+        if directive.type == "email":
+            if directive.id == "draft":
+                body_lines = max(6, len(directive.body) + 8)
+                return max(source_lines, body_lines)
+            limit = self._limit_lines(directive, default=20)
+            return max(source_lines, 12 + limit + 12)
 
         if directive.type == "note":
             return max(source_lines, max(4, len(directive.body) + 4))
@@ -324,13 +342,18 @@ class DocumentView(VerticalScroll):
         return 2
 
     def _preview_lines(self, directive: Directive) -> int:
+        return self._limit_lines(directive, default=20, param_name="lines")
+
+    def _limit_lines(self, directive: Directive, default: int, param_name: str = "limit") -> int:
         raw_lines = directive.params.get("lines")
+        if param_name != "lines":
+            raw_lines = directive.params.get(param_name)
         if raw_lines is None:
-            return 20
+            return default
         try:
             return max(1, int(raw_lines.strip('"')))
         except ValueError:
-            return 20
+            return default
 
     def _spacer(self, height: int) -> Static:
         spacer = Static("", classes="viewport-spacer")

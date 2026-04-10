@@ -1,0 +1,28 @@
+[renderer]
+directive_type = "sh-output"
+display_name = "Shell Output"
+description = "Captured output for a ::sh block."
+version = "1.0.0"
+supports_inline_source = true
+supports_editing = false
+
+[[params]]
+name = "exit"
+description = "Process exit code."
+
+[[params]]
+name = "duration"
+description = "Execution duration."
+
+[[params]]
+name = "ts"
+description = "Execution timestamp."
+
+[capabilities]
+
+[sandbox]
+execution_mode = "in-process"
+network = false
+storage = false
+document_text = false
+notes = "Pure renderer for previously captured shell output text."

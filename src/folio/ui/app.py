@@ -10,17 +10,23 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Footer, Header, Static, TextArea
 
 from folio.core.events import EventBus
+from folio.core.contact_reader import ContactCard, ContactReader, ContactReaderError
+from folio.core.email_store import EmailDraft, EmailStoreError, MaildirEmailStore
 from folio.core.models import Directive, DocumentModel, TextMutation
 from folio.core.mutations import MutationEngine
 from folio.core.parser import DirectiveParser
 from folio.core.registry import CapabilityRegistry
+from folio.core.sh_runner import ShRunner
 from folio.core.store import DocumentConflictError, DocumentStore
 from folio.core.web_reader import WebReader, resolve_web_url
 from folio.python.worker import PyWorker
 from folio.renderers.base import AdvisoryAction, AdvisorySpec, RenderContext
+from folio.renderers.contact import ContactRenderer
+from folio.renderers.email import EmailRenderer
 from folio.renderers.file import FileRenderer
 from folio.renderers.note import NoteRenderer
 from folio.renderers.py import PyRenderer
+from folio.renderers.sh import ShOutputRenderer, ShRenderer
 from folio.renderers.table import TableRenderer
 from folio.renderers.task import TaskRenderer
 from folio.renderers.web import WebRenderer
@@ -130,6 +136,83 @@ class FolioApp(App[None]):
     .file-content {
       height: auto;
     }
+    .contact-widget {
+      height: auto;
+      border: round $surface-lighten-1;
+      padding: 1;
+      margin-bottom: 1;
+    }
+    .contact-meta, .contact-more {
+      color: $text-muted;
+      height: auto;
+      margin-bottom: 1;
+    }
+    .contact-card, .contact-empty, .contact-status {
+      height: auto;
+      margin-bottom: 1;
+    }
+    .contact-form, .contact-field, .contact-actions {
+      height: auto;
+    }
+    .contact-field {
+      margin-bottom: 1;
+    }
+    .contact-input {
+      width: 1fr;
+    }
+    .contact-save {
+      width: 12;
+    }
+    .email-widget {
+      height: auto;
+      border: round $surface-lighten-1;
+      padding: 1;
+      margin-bottom: 1;
+    }
+    .email-meta, .email-selected-meta {
+      color: $text-muted;
+      height: auto;
+      margin-bottom: 1;
+    }
+    .email-list, .email-actions {
+      height: auto;
+      margin-bottom: 1;
+    }
+    .email-open {
+      width: 1fr;
+      margin-bottom: 1;
+    }
+    .email-action {
+      width: 14;
+      margin-right: 1;
+    }
+    .email-body, .email-empty {
+      height: auto;
+    }
+    .email-compose-widget {
+      height: auto;
+      border: round $surface-lighten-1;
+      padding: 1;
+      margin-bottom: 1;
+    }
+    .email-compose-meta, .email-compose-form, .email-compose-actions {
+      height: auto;
+      margin-bottom: 1;
+    }
+    .email-compose-meta {
+      color: $text-muted;
+    }
+    .email-compose-input {
+      width: 1fr;
+      margin-bottom: 1;
+    }
+    .email-compose-body {
+      height: 10;
+      margin-bottom: 1;
+    }
+    .email-compose-save {
+      width: 14;
+    }
     .note-widget {
       height: auto;
       border: round $surface-lighten-1;
@@ -143,6 +226,31 @@ class FolioApp(App[None]):
     }
     .note-content {
       height: auto;
+    }
+    .sh-widget, .sh-output-widget {
+      height: auto;
+      border: round $surface-lighten-1;
+      padding: 1;
+      margin-bottom: 1;
+    }
+    .sh-toolbar, .sh-output-meta {
+      height: auto;
+      margin-bottom: 1;
+    }
+    .sh-meta, .sh-output-summary {
+      width: 1fr;
+      color: $text-muted;
+    }
+    .sh-run, .sh-output-exit {
+      width: 18;
+    }
+    .sh-command, .sh-stdout, .sh-stderr {
+      height: auto;
+    }
+    .sh-stderr {
+      border: round $error;
+      padding: 1;
+      margin-top: 1;
     }
     .web-widget {
       height: auto;
@@ -220,9 +328,10 @@ class FolioApp(App[None]):
         Binding("f6", "toggle_single_pane", "Split Pane", id=LAYOUT_BINDING_ID),
     ]
 
-    def __init__(self, document_path: Path) -> None:
+    def __init__(self, document_path: Path, *, trusted_document: bool = True) -> None:
         super().__init__()
         self.document_path = document_path
+        self._trusted_document = trusted_document
         self.store = DocumentStore(document_path)
         self.parser = DirectiveParser()
         self.mutations = MutationEngine(self.store)
@@ -230,30 +339,43 @@ class FolioApp(App[None]):
         self.registry = CapabilityRegistry()
         self.model = DocumentModel(text="")
         self.py_worker = PyWorker()
+        self.sh_runner = ShRunner()
         self.web_reader = WebReader()
+        self.contact_reader = ContactReader()
         self.py_results = {}
         self.web_results = {}
+        self.email_selection: dict[str, str] = {}
         self._loading_source = False
         self._source_dirty = False
         self._single_pane_mode = True
         self._source_view_keys: set[str] = set()
         self._dismissed_advisories: set[str] = set()
         self._active_conflict_message: str | None = None
+        self._pending_shell_confirmations: set[str] = set()
         self._subscribe_events()
         self._register_renderers()
 
     def _register_renderers(self) -> None:
         self.registry.register(TaskRenderer)
         self.registry.register(PyRenderer)
+        self.registry.register(ShRenderer)
+        self.registry.register(ShOutputRenderer)
         self.registry.register(TableRenderer)
         self.registry.register(NoteRenderer)
         self.registry.register(FileRenderer)
+        self.registry.register(ContactRenderer)
+        self.registry.register(EmailRenderer)
         self.registry.register(WebRenderer)
 
     def _subscribe_events(self) -> None:
         self.events.subscribe("task.toggle", self.toggle_task)
         self.events.subscribe("py.run", self.run_py_block)
+        self.events.subscribe("sh.run", self.run_sh_block)
         self.events.subscribe("table.edit", self.update_table_directive)
+        self.events.subscribe("contact.save", self.save_contact)
+        self.events.subscribe("email.select", self.select_email_message)
+        self.events.subscribe("email.action", self.perform_email_action)
+        self.events.subscribe("email.compose_save", self.save_email_compose)
         self.events.subscribe("directive.toggle_view", self.toggle_directive_view)
         self.events.subscribe("directive.source_edit", self.update_directive_source_buffer)
         self.events.subscribe("web.reload", self.reload_web_directive)
@@ -323,6 +445,9 @@ class FolioApp(App[None]):
     def _py_directives(self) -> list[Directive]:
         return self.model.directive_index.directives_of_type("py")
 
+    def _sh_directives(self) -> list[Directive]:
+        return self.model.directive_index.directives_of_type("sh")
+
     def _run_autorun_blocks(self) -> dict[str, object]:
         directives = self._py_directives()
         if not directives:
@@ -369,6 +494,27 @@ class FolioApp(App[None]):
             self.log_status(f"{directive.title()} failed: {result.error}", error=True)
         self.reload_render_pane()
 
+    def run_sh_block(self, directive: Directive) -> None:
+        key = directive.key()
+        if not self._trusted_document and key not in self._pending_shell_confirmations:
+            self._pending_shell_confirmations.add(key)
+            self.log_status(
+                f"{directive.title()} is in an untrusted document. Review the command, then press Run again to execute.",
+                error=True,
+            )
+            self.reload_render_pane()
+            return
+
+        self._pending_shell_confirmations.discard(key)
+        command = directive.params.get("cmd", '""').strip('"')
+        cwd = directive.params.get("cwd")
+        self.log_status(f"Running {directive.title()} in the shell: {command}")
+        result = self.sh_runner.run(key, command, cwd)
+        if self._write_sh_output_block(directive, result):
+            self.log_status(
+                f"{directive.title()} completed with exit={result.exit_code} in {result.duration_seconds:.2f}s."
+            )
+
     def reload_render_pane(self) -> None:
         model = self.model
         self._apply_layout_mode()
@@ -406,6 +552,87 @@ class FolioApp(App[None]):
             source="table.edit",
             success_message=f"{directive.title()} updated from widget edit; source rows materialized into document.",
         )
+
+    def save_contact(
+        self,
+        directive: Directive,
+        path: str | None,
+        inline_source: bool,
+        card_index: int,
+        full_name: str,
+        title: str,
+        organization: str,
+        role: str,
+        emails: list[str],
+        phones: list[str],
+        addresses: list[str],
+        note: str,
+    ) -> None:
+        updated_card = ContactCard(
+            full_name=full_name or "Unnamed Contact",
+            emails=emails,
+            phones=phones,
+            organization=organization or None,
+            title=title or None,
+            role=role or None,
+            addresses=addresses,
+            note=note or None,
+            index=card_index,
+        )
+
+        if inline_source:
+            header = self._directive_header(directive.type, directive.id, dict(directive.params))
+            body = self.contact_reader.serialize_inline_card(updated_card)
+            new_text = "\n".join([header, *body, "::end"])
+            mutation = TextMutation(
+                kind="replace",
+                start_line=directive.start_line,
+                end_line=directive.end_line,
+                new_text=new_text,
+                source="contact.save",
+            )
+            self._apply_mutation(mutation, success_message=f"{directive.title()} saved into the document.")
+            return
+
+        base_ctx = self._build_render_context(self.model)
+        ctx = self.registry.context_for("contact", base_ctx)
+        if ctx.file_access is None:
+            self.log_status(f"{directive.title()} save blocked: renderer file access unavailable.", error=True)
+            return
+
+        try:
+            if path is None:
+                self.log_status(f"{directive.title()} save failed: missing contact path.", error=True)
+                return
+            source_path = ctx.file_access.resolve_document_relative(path)
+            cards = self.contact_reader.read_path(source_path, ctx.file_access)
+            if not source_path.is_file():
+                self.log_status(f"{directive.title()} save is only supported for a single .vcf file.", error=True)
+                return
+            if card_index < 0 or card_index >= len(cards):
+                self.log_status(f"{directive.title()} save failed: contact index is no longer valid.", error=True)
+                return
+
+            original = cards[card_index]
+            cards[card_index] = ContactCard(
+                full_name=updated_card.full_name or original.full_name,
+                emails=updated_card.emails,
+                phones=updated_card.phones,
+                organization=updated_card.organization,
+                title=updated_card.title,
+                role=updated_card.role,
+                addresses=updated_card.addresses,
+                note=updated_card.note,
+                source=original.source,
+                index=original.index,
+            )
+            self.contact_reader.write_path(source_path, cards, ctx.file_access)
+        except (ContactReaderError, PermissionError, OSError) as exc:
+            self.log_status(f"{directive.title()} save failed: {exc}", error=True)
+            return
+
+        self.log_status(f"{directive.title()} saved to {source_path}.")
+        self.reload_render_pane()
 
     def _replace_table_directive(
         self,
@@ -509,7 +736,9 @@ class FolioApp(App[None]):
         self._set_source_editor_text(updated_text)
         self._mark_source_dirty()
 
-    def toggle_single_pane(self) -> None:
+    def toggle_single_pane(self, advisory_id: str | None = None) -> None:
+        if advisory_id is not None:
+            self._dismissed_advisories.add(advisory_id)
         self._single_pane_mode = not self._single_pane_mode
         self._refresh_layout_binding()
         state = "single-pane" if self._single_pane_mode else "split-pane"
@@ -532,19 +761,119 @@ class FolioApp(App[None]):
             events=self.events,
             py_results=self.py_results,
             web_results=self.web_results,
+            email_selection=dict(self.email_selection),
             document_path=self.document_path,
             source_text=editor.text,
             directives_by_id=model.directive_index.by_id,
+            directive_find=model.directive_index.find,
             directive_source_view=set(self._source_view_keys),
             advisories=self._build_advisories(model),
             single_pane_mode=self._single_pane_mode,
+            document_trusted=self._trusted_document,
+            pending_shell_confirmations=set(self._pending_shell_confirmations),
         )
+
+    def select_email_message(self, directive: Directive, message_key: str) -> None:
+        self.email_selection[directive.key()] = message_key
+        self.reload_render_pane()
+
+    def perform_email_action(self, directive: Directive, message_key: str, action: str) -> None:
+        base_ctx = self._build_render_context(self.model)
+        ctx = self.registry.context_for("email", base_ctx)
+        if ctx.file_access is None:
+            self.log_status(f"{directive.title()} action blocked: renderer file access unavailable.", error=True)
+            return
+
+        raw_path = directive.id or directive.params.get("path", '"unknown"').strip('"')
+        folder = directive.params.get("folder", '"Inbox"').strip('"') or "Inbox"
+        archive_folder = directive.params.get("archive-folder", '"Archive"').strip('"') or "Archive"
+        trash_folder = directive.params.get("trash-folder", '"Trash"').strip('"') or "Trash"
+
+        try:
+            path = ctx.file_access.resolve_document_relative(raw_path)
+            store = MaildirEmailStore(path)
+            if action == "mark_read":
+                store.mark_read(folder, message_key, True)
+                self.log_status(f"{directive.title()} marked message {message_key} as read.")
+            elif action == "mark_unread":
+                store.mark_read(folder, message_key, False)
+                self.log_status(f"{directive.title()} marked message {message_key} as unread.")
+            elif action == "star":
+                store.set_flagged(folder, message_key, True)
+                self.log_status(f"{directive.title()} starred message {message_key}.")
+            elif action == "unstar":
+                store.set_flagged(folder, message_key, False)
+                self.log_status(f"{directive.title()} unstarred message {message_key}.")
+            elif action == "trash":
+                store.move_to_folder(folder, message_key, trash_folder)
+                self.email_selection.pop(directive.key(), None)
+                self.log_status(f"{directive.title()} moved message {message_key} to {trash_folder}.")
+            elif action == "archive":
+                store.move_to_folder(folder, message_key, archive_folder)
+                self.email_selection.pop(directive.key(), None)
+                self.log_status(f"{directive.title()} moved message {message_key} to {archive_folder}.")
+            else:
+                self.log_status(f"{directive.title()} unknown email action: {action}", error=True)
+                return
+        except (EmailStoreError, PermissionError, OSError) as exc:
+            self.log_status(f"{directive.title()} action failed: {exc}", error=True)
+            return
+
+        self.reload_render_pane()
+
+    def save_email_compose(self, directive: Directive, draft: EmailDraft) -> None:
+        base_ctx = self._build_render_context(self.model)
+        ctx = self.registry.context_for("email", base_ctx)
+        if ctx.file_access is None:
+            self.log_status(f"{directive.title()} draft save blocked: renderer file access unavailable.", error=True)
+            return
+
+        raw_path = directive.params.get("path", '""').strip('"')
+        drafts_folder = directive.params.get("drafts-folder", '"Drafts"').strip('"') or "Drafts"
+        existing_key = directive.params.get("draft-key", '""').strip('"') or None
+
+        try:
+            if not raw_path:
+                self.log_status(f"{directive.title()} draft save failed: missing Maildir path.", error=True)
+                return
+            path = ctx.file_access.resolve_document_relative(raw_path)
+            store = MaildirEmailStore(path)
+            new_key = store.save_draft(draft, drafts_folder=drafts_folder, existing_key=existing_key)
+        except (EmailStoreError, PermissionError, OSError) as exc:
+            self.log_status(f"{directive.title()} draft save failed: {exc}", error=True)
+            return
+
+        params = dict(directive.params)
+        params["path"] = f'"{raw_path}"'
+        params["drafts-folder"] = f'"{drafts_folder}"'
+        params["draft-key"] = f'"{new_key}"'
+        params["from"] = f'"{draft.from_addr}"'
+        params["to"] = f'"{draft.to}"'
+        if draft.cc:
+            params["cc"] = f'"{draft.cc}"'
+        else:
+            params.pop("cc", None)
+        params["subject"] = f'"{draft.subject}"'
+        header = self._directive_header(directive.type, directive.id, params)
+        body_lines = draft.body.splitlines() if draft.body else []
+        new_text = "\n".join([header, *body_lines, "::end"])
+        mutation = TextMutation(
+            kind="replace",
+            start_line=directive.start_line,
+            end_line=directive.end_line,
+            new_text=new_text,
+            source="email.compose_save",
+        )
+        self._apply_mutation(mutation, success_message=f"{directive.title()} saved draft to {drafts_folder}.")
 
     def _build_advisories(self, model: DocumentModel) -> list[AdvisorySpec]:
         advisories: list[AdvisorySpec] = []
         line_count = len(model.text.splitlines())
 
         if line_count >= 40 and "document-size" not in self._dismissed_advisories:
+            actions = [AdvisoryAction("dismiss", "dismiss", "advisory.dismiss")]
+            if not self._single_pane_mode:
+                actions.insert(0, AdvisoryAction("single-pane", "single pane", "ui.toggle_single_pane"))
             advisories.append(
                 AdvisorySpec(
                     id="document-size",
@@ -553,10 +882,7 @@ class FolioApp(App[None]):
                         f"This document has {line_count} lines ({len(model.directives)} directives). "
                         "Use single-pane mode or directive source toggles to reduce visual load."
                     ),
-                    actions=[
-                        AdvisoryAction("single-pane", "single pane", "ui.toggle_single_pane"),
-                        AdvisoryAction("dismiss", "dismiss", "advisory.dismiss"),
-                    ],
+                    actions=actions,
                     level="warning",
                 )
             )
@@ -640,6 +966,38 @@ class FolioApp(App[None]):
             max_fetch_bytes=max_fetch_bytes,
             timeout_seconds=timeout_seconds,
         )
+
+    def _write_sh_output_block(self, directive: Directive, result) -> bool:
+        params = {
+            "exit": str(result.exit_code),
+            "duration": f'"{result.duration_seconds:.2f}s"',
+            "ts": f'"{result.timestamp}"',
+        }
+        header = self._directive_header("sh-output", directive.id, params)
+        body: list[str] = ["[stdout]"]
+        body.extend(result.stdout or [""])
+        if result.stderr:
+            body.extend(["", "[stderr]", *result.stderr])
+        new_text = "\n".join([header, *body, "::end"])
+
+        existing = self.model.directive_index.find("sh-output", directive.key())
+        if existing is None:
+            mutation = TextMutation(
+                kind="append",
+                start_line=directive.end_line + 1,
+                end_line=directive.end_line,
+                new_text=new_text,
+                source="sh.run",
+            )
+        else:
+            mutation = TextMutation(
+                kind="replace",
+                start_line=existing.start_line,
+                end_line=existing.end_line,
+                new_text=new_text,
+                source="sh.run",
+            )
+        return self._apply_mutation(mutation, success_message=None)
 
     def _refresh_layout_binding(self) -> None:
         description = self._layout_binding_description()

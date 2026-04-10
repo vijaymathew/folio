@@ -66,10 +66,16 @@ class CapabilityRegistry:
             events=base_ctx.events if caps.events else None,
             py_results=base_ctx.py_results if caps.py_results else None,
             web_results=base_ctx.web_results if caps.web_results else None,
+            email_selection=base_ctx.email_selection if caps.email_selection else None,
             document_path=base_ctx.document_path if caps.document_path else None,
-            file_access=RendererFileAccess(base_ctx.document_path) if caps.filesystem_read else None,
+            file_access=RendererFileAccess(base_ctx.document_path) if (caps.filesystem_read or caps.filesystem_write) else None,
             source_text=base_ctx.source_text if caps.source_text else None,
             directives_by_id=base_ctx.directives_by_id if caps.directive_lookup else None,
+            directive_find=base_ctx.directive_find if caps.directive_lookup else None,
+            document_trusted=base_ctx.document_trusted if caps.trust_state else True,
+            pending_shell_confirmations=(
+                set(base_ctx.pending_shell_confirmations or set()) if caps.trust_state else None
+            ),
         )
 
     def supported_types(self) -> list[str]:
@@ -94,10 +100,13 @@ class CapabilityRegistry:
                 events=bool(capabilities.get("events", False)),
                 py_results=bool(capabilities.get("py_results", False)),
                 web_results=bool(capabilities.get("web_results", False)),
+                email_selection=bool(capabilities.get("email_selection", False)),
                 document_path=bool(capabilities.get("document_path", False)),
                 source_text=bool(capabilities.get("source_text", False)),
                 directive_lookup=bool(capabilities.get("directive_lookup", False)),
                 filesystem_read=bool(capabilities.get("filesystem_read", False)),
+                filesystem_write=bool(capabilities.get("filesystem_write", False)),
+                trust_state=bool(capabilities.get("trust_state", False)),
             ),
             sandbox=SandboxSpec(
                 execution_mode=str(sandbox.get("execution_mode", "in-process")),

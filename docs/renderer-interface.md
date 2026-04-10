@@ -38,10 +38,13 @@ class ActionSpec:
 class CapabilitySpec:
     events: bool = False
     py_results: bool = False
+    web_results: bool = False
     document_path: bool = False
     source_text: bool = False
     directive_lookup: bool = False
     filesystem_read: bool = False
+    filesystem_write: bool = False
+    trust_state: bool = False
 
 
 @dataclass(slots=True)
@@ -76,6 +79,8 @@ class Renderer(Protocol):
 
 - `events`: shared `EventBus` for semantic actions
 - `py_results`: current `::py` evaluation results
+- `web_results`: current `::web` fetch results
+- `email_selection`: current ephemeral selected-message state for `::email`
 - `document_path`: path of the current document
 - `file_access`: restricted file access service for file-backed renderers
 - `source_text`: current in-memory document buffer
@@ -160,10 +165,13 @@ The registry enforces renderer capabilities by building a filtered `RenderContex
 
 - `events`: allows semantic event emission
 - `py_results`: allows reading `::py` worker results
+- `email_selection`: allows a renderer to read app-managed ephemeral selection state
 - `directive_lookup`: allows cross-reference lookup by directive id
 - `document_path`: exposes the current document path
-- `filesystem_read`: exposes `ctx.file_access`
+- `filesystem_read`: exposes `ctx.file_access` for reads
+- `filesystem_write`: exposes `ctx.file_access` for writes
 - `source_text`: exposes the full in-memory source buffer
+- `trust_state`: exposes trusted-document and shell-confirmation state
 
 This is the current runtime boundary for built-in renderers. It prevents ambient access to app state, but it is not equivalent to OS-level sandboxing for arbitrary third-party Python code running in-process.
 

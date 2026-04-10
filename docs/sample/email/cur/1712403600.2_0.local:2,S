@@ -1,0 +1,11 @@
+From: sara@example.com
+To: vijay@example.com
+Subject: Budget Review
+Date: Fri, 11 Apr 2026 11:00:00 +0000
+Message-ID: <budget-review-1@example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+
+Please review the latest Q3 budget variance before the board packet goes out.
+
+The hardware line is still above plan, but software spend is slightly under.

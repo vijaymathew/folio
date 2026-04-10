@@ -1,0 +1,94 @@
+[renderer]
+directive_type = "email"
+display_name = "Email"
+description = "Text-native Maildir reader with basic message actions."
+version = "1.0.0"
+supports_inline_source = true
+supports_editing = true
+
+[[params]]
+name = "path"
+description = "Optional explicit Maildir path when the directive id is not the mailbox path."
+
+[[params]]
+name = "folder"
+default = "\"Inbox\""
+description = "Maildir folder to display. Inbox maps to the root Maildir."
+
+[[params]]
+name = "limit"
+default = "20"
+description = "Maximum number of messages to display in the summary list."
+
+[[params]]
+name = "archive-folder"
+default = "\"Archive\""
+description = "Target Maildir folder for Archive."
+
+[[params]]
+name = "trash-folder"
+default = "\"Trash\""
+description = "Target Maildir folder for Trash."
+
+[[params]]
+name = "drafts-folder"
+default = "\"Drafts\""
+description = "Target Maildir folder for saving ::email[draft] messages."
+
+[[params]]
+name = "draft-key"
+description = "Internal key of the saved draft in Maildir."
+
+[[params]]
+name = "from"
+description = "Draft sender address for ::email[draft]."
+
+[[params]]
+name = "to"
+description = "Draft recipient list for ::email[draft]."
+
+[[params]]
+name = "cc"
+description = "Draft CC list for ::email[draft]."
+
+[[params]]
+name = "subject"
+description = "Draft subject for ::email[draft]."
+
+[[actions]]
+name = "email.select"
+description = "Select a message for reading in the widget."
+
+[actions.payload_schema]
+directive = "Directive"
+message_key = "str"
+
+[[actions]]
+name = "email.action"
+description = "Run a mailbox action such as read, star, trash, or archive."
+
+[actions.payload_schema]
+directive = "Directive"
+message_key = "str"
+action = "str"
+
+[[actions]]
+name = "email.compose_save"
+description = "Persist a ::email[draft] message to the document and target Maildir Drafts folder."
+
+[actions.payload_schema]
+directive = "Directive"
+draft = "EmailDraft"
+
+[capabilities]
+events = true
+filesystem_read = true
+filesystem_write = true
+email_selection = true
+
+[sandbox]
+execution_mode = "service"
+network = false
+storage = true
+document_text = false
+notes = "Email access goes through the app-level Maildir service built on Python's standard-library mailbox module."

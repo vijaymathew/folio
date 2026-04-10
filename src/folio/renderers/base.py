@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol
+from typing import Callable, Protocol
 
 from textual.widget import Widget
 
@@ -47,6 +47,10 @@ class RendererFileAccess:
         resolved = self._guard(path)
         return sorted(resolved.iterdir(), key=lambda entry: (entry.is_file(), entry.name.lower()))
 
+    def write_text(self, path: Path, text: str) -> None:
+        resolved = self._guard(path)
+        resolved.write_text(text, encoding="utf-8")
+
     def _guard(self, path: Path) -> Path:
         resolved = path.resolve()
         if not self._is_allowed(resolved):
@@ -85,13 +89,17 @@ class RenderContext:
     events: EventBus | None = None
     py_results: dict[str, PyBlockResult] | None = None
     web_results: dict[str, WebPageResult] | None = None
+    email_selection: dict[str, str] | None = None
     document_path: Path | None = None
     file_access: RendererFileAccess | None = None
     source_text: str | None = None
     directives_by_id: dict[str, Directive] | None = None
+    directive_find: Callable[[str, str], Directive | None] | None = None
     directive_source_view: set[str] | None = None
     advisories: list[AdvisorySpec] | None = None
     single_pane_mode: bool = False
+    document_trusted: bool = True
+    pending_shell_confirmations: set[str] | None = None
 
 
 @dataclass(slots=True)
@@ -114,10 +122,13 @@ class CapabilitySpec:
     events: bool = False
     py_results: bool = False
     web_results: bool = False
+    email_selection: bool = False
     document_path: bool = False
     source_text: bool = False
     directive_lookup: bool = False
     filesystem_read: bool = False
+    filesystem_write: bool = False
+    trust_state: bool = False
 
 
 @dataclass(slots=True)

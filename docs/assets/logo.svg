@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 120" role="img" aria-labelledby="folio-title folio-desc">
+  <title id="folio-title">Folio Logo</title>
+  <desc id="folio-desc">Monospaced ::FOLIO text logo with terminal-style cursor.</desc>
+  <rect width="400" height="120" rx="16" fill="#0d2230"/>
+  <text x="40" y="75" font-family="monospace" font-size="64" font-weight="700" letter-spacing="2px" fill="#ffd166">
+    <tspan fill="#33d1b0">::</tspan>folio<tspan fill="#33d1b0" class="cursor">_</tspan>
+  </text>
+  <text x="130" y="105" font-family="monospace" font-size="30" font-weight="300" fill="#9fb9c8">
+    prototype
+  </text>  
+  <style>
+    .cursor {
+      animation: blink 1s step-end infinite;
+    }
+    @keyframes blink {
+      from, to { opacity: 1; }
+      50% { opacity: 0; }
+    }
+  </style>
+</svg>

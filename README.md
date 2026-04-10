@@ -1,6 +1,6 @@
 # Folio
 
-![Folio logo](docs/assets/logo.svg)
+<img src="docs/assets/logo.svg" alt="Folio logo" width=200 height=60 />
 
 **Folio** is a CLI-based prototype for a text-native architecture where **the document is the computer**. 
 

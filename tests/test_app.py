@@ -1,0 +1,260 @@
+from __future__ import annotations
+
+import asyncio
+import shutil
+from pathlib import Path
+
+from folio.core.models import WebLink, WebPageResult
+from folio.renderers.base import widget_id_fragment
+from folio.renderers.table import TableEditor
+from folio.ui.document_view import DocumentView
+from folio.ui.app import FolioApp
+from textual.widgets import Button, DataTable, TextArea
+
+
+def test_task_checkbox_click_rewrites_source(tmp_path: Path) -> None:
+    source = Path("/home/vijay/Projects/folio/docs/example.folio")
+    doc = tmp_path / "example.folio"
+    shutil.copyfile(source, doc)
+
+    async def scenario() -> None:
+        app = FolioApp(doc)
+        async with app.run_test(size=(140, 45)) as pilot:
+            await pilot.pause(0.2)
+            await pilot.click("#toggle-call-finance")
+            await pilot.pause(0.2)
+
+    asyncio.run(scenario())
+
+    updated = doc.read_text()
+    assert 'done="true"' in updated
+    assert 'completed="now"' in updated
+
+
+def test_run_py_materializes_live_table_widget(tmp_path: Path) -> None:
+    source = Path("/home/vijay/Projects/folio/docs/example.folio")
+    doc = tmp_path / "example.folio"
+    shutil.copyfile(source, doc)
+
+    async def scenario() -> None:
+        app = FolioApp(doc)
+        async with app.run_test(size=(140, 45)) as pilot:
+            await pilot.pause(0.2)
+            app.query_one("#run-py-budget-check", Button).press()
+            await pilot.pause(0.2)
+            tables = list(app.query(TableEditor))
+            assert len(tables) == 1
+            assert len(tables[0].rows) == 4
+
+    asyncio.run(scenario())
+
+
+def test_table_edit_updates_document_text(tmp_path: Path) -> None:
+    source = Path("/home/vijay/Projects/folio/docs/example.folio")
+    doc = tmp_path / "example.folio"
+    shutil.copyfile(source, doc)
+
+    async def scenario() -> None:
+        app = FolioApp(doc)
+        async with app.run_test(size=(140, 45)) as pilot:
+            await pilot.pause(0.2)
+            app.query_one("#run-py-budget-check", Button).press()
+            await pilot.pause(0.2)
+            table = app.query_one(TableEditor)
+            grid = table.query_one(DataTable)
+            grid.move_cursor(row=0, column=2)
+            grid.focus()
+            await pilot.pause(0.2)
+            await pilot.press("9", "9", "9", "9", "enter")
+            await pilot.pause(0.2)
+
+    asyncio.run(scenario())
+
+    updated = doc.read_text()
+    assert '"budget": 9999' in updated
+
+
+def test_render_pane_only_mounts_visible_window(tmp_path: Path) -> None:
+    doc = tmp_path / "windowed.folio"
+    blocks = []
+    for index in range(30):
+        blocks.append(
+            "\n".join(
+                [
+                    f'::task[item-{index}]{{done="false" due="soon"}}',
+                    f"Task {index}",
+                    "::end",
+                ]
+            )
+        )
+    doc.write_text("\n\n".join(blocks))
+
+    async def scenario() -> None:
+        app = FolioApp(doc)
+        async with app.run_test(size=(100, 18)) as pilot:
+            await pilot.pause(0.2)
+            initial_buttons = [button.id for button in app.query(Button) if button.id and button.id.startswith("toggle-item-")]
+            assert len(initial_buttons) < 30
+            assert list(app.query("#toggle-item-0"))
+            assert not list(app.query("#toggle-item-29"))
+
+            render = app.query_one("#render-pane", DocumentView)
+            render.scroll_end(animate=False)
+            await pilot.pause(0.3)
+
+            scrolled_buttons = [button.id for button in app.query(Button) if button.id and button.id.startswith("toggle-item-")]
+            assert len(scrolled_buttons) < 30
+            assert list(app.query("#toggle-item-29"))
+            assert not list(app.query("#toggle-item-0"))
+
+    asyncio.run(scenario())
+
+
+def test_directive_can_toggle_between_widget_and_source_view(tmp_path: Path) -> None:
+    source = Path("/home/vijay/Projects/folio/docs/example.folio")
+    doc = tmp_path / "example.folio"
+    shutil.copyfile(source, doc)
+
+    async def scenario() -> None:
+        app = FolioApp(doc)
+        async with app.run_test(size=(140, 45)) as pilot:
+            await pilot.pause(0.2)
+            assert list(app.query("#toggle-call-finance"))
+            await pilot.click("#toggle-view-call-finance")
+            await pilot.pause(0.2)
+            assert not list(app.query("#toggle-call-finance"))
+            assert app.query_one("#directive-source-call-finance", TextArea)
+
+    asyncio.run(scenario())
+
+
+def test_inline_directive_source_editor_updates_main_source_buffer(tmp_path: Path) -> None:
+    source = Path("/home/vijay/Projects/folio/docs/example.folio")
+    doc = tmp_path / "example.folio"
+    shutil.copyfile(source, doc)
+
+    async def scenario() -> None:
+        app = FolioApp(doc)
+        async with app.run_test(size=(140, 45)) as pilot:
+            await pilot.pause(0.2)
+            app.query_one("#toggle-view-call-finance", Button).press()
+            await pilot.pause(0.2)
+
+            inline_editor = app.query_one("#directive-source-call-finance", TextArea)
+            updated_text = inline_editor.text.replace('done="false"', 'done="true"', 1)
+            inline_editor.load_text(updated_text)
+            await pilot.pause(0.2)
+
+            source_editor = app.query_one("#source-editor", TextArea)
+            assert updated_text in source_editor.text
+            assert app._source_dirty is True
+
+    asyncio.run(scenario())
+
+
+def test_file_directive_toggle_uses_safe_widget_ids(tmp_path: Path) -> None:
+    source = Path("/home/vijay/Projects/folio/docs/example.folio")
+    doc = tmp_path / "example.folio"
+    shutil.copyfile(source, doc)
+    key_fragment = widget_id_fragment("docs/example.folio")
+
+    async def scenario() -> None:
+        app = FolioApp(doc)
+        async with app.run_test(size=(140, 45)) as pilot:
+            await pilot.pause(0.2)
+            render = app.query_one("#render-pane", DocumentView)
+            render.scroll_end(animate=False)
+            await pilot.pause(0.3)
+            assert list(app.query(f"#toggle-view-{key_fragment}"))
+            app.query_one(f"#toggle-view-{key_fragment}", Button).press()
+            await pilot.pause(0.2)
+            assert list(app.query(f"#directive-source-{key_fragment}"))
+
+    asyncio.run(scenario())
+
+
+def test_single_pane_mode_is_default_and_f6_switches_to_split_pane(tmp_path: Path) -> None:
+    source = Path("/home/vijay/Projects/folio/docs/example.folio")
+    doc = tmp_path / "example.folio"
+    shutil.copyfile(source, doc)
+
+    async def scenario() -> None:
+        app = FolioApp(doc)
+        async with app.run_test(size=(140, 45)) as pilot:
+            await pilot.pause(0.2)
+            source_pane = app.query_one("#source-pane")
+            assert app._single_pane_mode is True
+            assert source_pane.styles.display == "none"
+            assert app._render_title() == "Document (Single Pane)"
+            assert app.active_bindings["f6"].binding.description == "Split Pane"
+
+            await pilot.press("f6")
+            await pilot.pause(0.2)
+            assert app._single_pane_mode is False
+            assert source_pane.styles.display == "block"
+            assert app._render_title() == "Rendered"
+            assert app.active_bindings["f6"].binding.description == "Single Pane"
+
+    asyncio.run(scenario())
+
+
+def test_large_document_shows_inline_advisory(tmp_path: Path) -> None:
+    doc = tmp_path / "advisory.folio"
+    blocks = []
+    for index in range(16):
+        blocks.append(
+            "\n".join(
+                [
+                    f'::task[item-{index}]{{done="false" due="soon"}}',
+                    f"Task {index}",
+                    "::end",
+                    "",
+                ]
+            )
+        )
+    doc.write_text("\n".join(blocks), encoding="utf-8")
+
+    async def scenario() -> None:
+        app = FolioApp(doc)
+        async with app.run_test(size=(140, 45)) as pilot:
+            await pilot.pause(0.2)
+            assert list(app.query("#advisory-action-document-size-dismiss"))
+            await pilot.click("#advisory-action-document-size-dismiss")
+            await pilot.pause(0.2)
+            assert not list(app.query("#advisory-action-document-size-dismiss"))
+
+    asyncio.run(scenario())
+
+
+def test_web_reader_fetches_text_only_page(tmp_path: Path) -> None:
+    doc = tmp_path / "web.folio"
+    url = "https://example.test/article"
+    doc.write_text(f'::web[{url}]{{load="manual" lines="20"}}\n', encoding="utf-8")
+
+    async def scenario() -> None:
+        app = FolioApp(doc)
+        app.web_reader.fetch = lambda key, requested_url, **kwargs: WebPageResult(
+            key=key,
+            status="ok",
+            url=requested_url,
+            title="Example article",
+            content="Launch Notes\n\nThis is the first paragraph of the article.",
+            links=[WebLink(index=1, text="documentation", url="https://example.test/docs")],
+            content_type="text/html",
+        )
+        async with app.run_test(size=(140, 45)) as pilot:
+            await pilot.pause(0.2)
+            reload_button = next(
+                button for button in app.query(Button) if button.id and button.id.startswith("reload-web-")
+            )
+            reload_button.press()
+            await pilot.pause(0.3)
+
+            result = app.web_results[url]
+            assert result.status == "ok"
+            assert result.title == "Example article"
+            assert "Launch Notes" in result.content
+            assert len(result.links) == 1
+            assert result.links[0].url.endswith("/docs")
+
+    asyncio.run(scenario())

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from .models import Directive, DocumentModel, ProseBlock
+from .models import Directive, DirectiveIndex, DocumentModel, ProseBlock
 
 
 DIRECTIVE_RE = re.compile(r"^::(?P<type>[a-zA-Z0-9:_-]+)(?:\[(?P<id>[^\]]+)\])?(?:\{(?P<params>.*)\})?$")
@@ -80,7 +80,12 @@ class DirectiveParser:
                 )
             )
 
-        return DocumentModel(text=text, directives=directives, prose=prose)
+        return DocumentModel(
+            text=text,
+            directives=directives,
+            prose=prose,
+            directive_index=DirectiveIndex.build(directives),
+        )
 
     def _parse_params(self, raw: str) -> dict[str, str]:
         params: dict[str, str] = {}

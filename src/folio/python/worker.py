@@ -11,6 +11,7 @@ import statistics
 import string
 import subprocess
 import sys
+import tempfile
 import textwrap
 import traceback
 from collections import Counter, defaultdict
@@ -106,9 +107,63 @@ FORBIDDEN_NODES = (
     ast.YieldFrom,
 )
 
+BLOCKED_AUDIT_PREFIXES = (
+    "cpython._PySys_ClearAuditHooks",
+    "fcntl.",
+    "ftplib.",
+    "glob.glob",
+    "glob.glob/2",
+    "http.client.",
+    "imaplib.",
+    "marshal.load",
+    "marshal.loads",
+    "os.chdir",
+    "os.chflags",
+    "os.chmod",
+    "os.chown",
+    "os.exec",
+    "os.fork",
+    "os.fwalk",
+    "os.kill",
+    "os.link",
+    "os.listdir",
+    "os.listxattr",
+    "os.lockf",
+    "os.mkdir",
+    "os.open",
+    "os.remove",
+    "os.rename",
+    "os.replace",
+    "os.rmdir",
+    "os.scandir",
+    "os.setxattr",
+    "os.spawn",
+    "os.startfile",
+    "os.symlink",
+    "os.system",
+    "pathlib.",
+    "poplib.",
+    "pty.",
+    "resource.prlimit",
+    "shutil.",
+    "smtplib.",
+    "socket.",
+    "sqlite3.",
+    "ssl.",
+    "subprocess.",
+    "telnetlib.",
+    "urllib.",
+    "webbrowser.",
+)
+
+BLOCKED_AUDIT_EVENTS = {
+    "code.__new__",
+    "open",
+}
+
 
 def _block_key(directive: Directive) -> str:
-    return directive.id or str(directive.start_line)
+    return directive.key()
 
 
 def _safe_error(message: str) -> str:
@@ -195,6 +250,70 @@ def _safe_builtins() -> dict[str, Any]:
     builtins_copy = dict(SAFE_BUILTINS)
     builtins_copy["__import__"] = _safe_import
     return builtins_copy
+
+
+def _should_block_audit_event(event: str) -> bool:
+    if event in BLOCKED_AUDIT_EVENTS:
+        return True
+    return any(event.startswith(prefix) for prefix in BLOCKED_AUDIT_PREFIXES)
+
+
+def _install_audit_hook() -> None:
+    def audit(event: str, args: tuple[Any, ...]) -> None:
+        if _should_block_audit_event(event):
+            raise PermissionError(f"audit event '{event}' is blocked")
+
+    sys.addaudithook(audit)
+
+
+def _harden_runtime() -> None:
+    sys.dont_write_bytecode = True
+    sys.setrecursionlimit(250)
+    sys.path[:] = []
+
+    sandbox_dir = Path.cwd()
+    os.environ.clear()
+    os.environ.update(
+        {
+            "HOME": str(sandbox_dir),
+            "TMPDIR": str(sandbox_dir),
+            "PYTHONNOUSERSITE": "1",
+        }
+    )
+
+    try:
+        os.umask(0o077)
+    except Exception:
+        pass
+
+    if resource is not None:
+        limits: list[tuple[int, tuple[int, int]]] = [
+            (resource.RLIMIT_CPU, (2, 2)),
+            (resource.RLIMIT_FSIZE, (1024 * 1024, 1024 * 1024)),
+            (resource.RLIMIT_NOFILE, (32, 32)),
+        ]
+        memory = 128 * 1024 * 1024
+        for limit_name in ("RLIMIT_AS", "RLIMIT_DATA"):
+            limit = getattr(resource, limit_name, None)
+            if limit is not None:
+                limits.append((limit, (memory, memory)))
+        stack_limit = getattr(resource, "RLIMIT_STACK", None)
+        if stack_limit is not None:
+            limits.append((stack_limit, (16 * 1024 * 1024, 16 * 1024 * 1024)))
+        nproc_limit = getattr(resource, "RLIMIT_NPROC", None)
+        if nproc_limit is not None:
+            limits.append((nproc_limit, (0, 0)))
+        core_limit = getattr(resource, "RLIMIT_CORE", None)
+        if core_limit is not None:
+            limits.append((core_limit, (0, 0)))
+
+        for limit, value in limits:
+            try:
+                resource.setrlimit(limit, value)
+            except Exception:
+                continue
+
+    _install_audit_hook()
 
 
 def _evaluate_payload(blocks: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -291,14 +410,20 @@ def _limit_subprocess() -> None:
         return
     try:
         resource.setrlimit(resource.RLIMIT_CPU, (2, 2))
-        memory = 256 * 1024 * 1024
+        memory = 128 * 1024 * 1024
         resource.setrlimit(resource.RLIMIT_AS, (memory, memory))
+        nofile = getattr(resource, "RLIMIT_NOFILE", None)
+        if nofile is not None:
+            resource.setrlimit(nofile, (32, 32))
+        core_limit = getattr(resource, "RLIMIT_CORE", None)
+        if core_limit is not None:
+            resource.setrlimit(core_limit, (0, 0))
     except Exception:
         return
 
 
 class PyWorker:
-    """Subprocess-backed runtime for constrained document-scoped ::py evaluation."""
+    """Subprocess-backed runtime for hardened document-scoped ::py evaluation."""
 
     def run_document(
         self,
@@ -323,47 +448,25 @@ class PyWorker:
             ]
         }
 
-        env = os.environ.copy()
-        src_root = str(Path(__file__).resolve().parents[2])
-        env["PYTHONPATH"] = src_root + os.pathsep + env.get("PYTHONPATH", "")
-
         try:
-            proc = subprocess.run(
-                [sys.executable, "-m", "folio.python.worker"],
-                input=json.dumps(payload),
-                text=True,
-                capture_output=True,
-                check=False,
-                timeout=3,
-                env=env,
-                preexec_fn=_limit_subprocess if resource is not None else None,
-            )
-        except subprocess.TimeoutExpired:
-            return {
-                _block_key(directive): PyBlockResult(
-                    key=_block_key(directive),
-                    status="error",
-                    stdout=[],
-                    error="SafeExecutionError: execution timed out",
-                    context={},
-                    table=None,
+            with tempfile.TemporaryDirectory(prefix="folio-py-") as sandbox_dir:
+                proc = subprocess.run(
+                    self._worker_command(),
+                    input=json.dumps(payload),
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                    timeout=3,
+                    env=self._subprocess_env(sandbox_dir),
+                    cwd=sandbox_dir,
+                    preexec_fn=_limit_subprocess if resource is not None else None,
                 )
-                for directive in directives
-            }
+        except subprocess.TimeoutExpired:
+            return self._worker_error_results(directives, "SafeExecutionError: execution timed out")
 
         if proc.returncode != 0:
             error = proc.stderr.strip() or "Python worker failed."
-            return {
-                _block_key(directive): PyBlockResult(
-                    key=_block_key(directive),
-                    status="error",
-                    stdout=[],
-                    error=error,
-                    context={},
-                    table=None,
-                )
-                for directive in directives
-            }
+            return self._worker_error_results(directives, error)
 
         raw_results = json.loads(proc.stdout or "{}")
         return {
@@ -376,6 +479,39 @@ class PyWorker:
                 table=value.get("table"),
             )
             for key, value in raw_results.items()
+        }
+
+    def _worker_command(self) -> list[str]:
+        src_root = str(Path(__file__).resolve().parents[2])
+        bootstrap = (
+            "import sys; "
+            f"sys.path.insert(0, {src_root!r}); "
+            "from folio.python.worker import _main; "
+            "raise SystemExit(_main())"
+        )
+        return [sys.executable, "-I", "-S", "-B", "-c", bootstrap]
+
+    def _subprocess_env(self, sandbox_dir: str) -> dict[str, str]:
+        return {
+            "HOME": sandbox_dir,
+            "TMPDIR": sandbox_dir,
+            "PATH": os.environ.get("PATH", ""),
+            "PYTHONNOUSERSITE": "1",
+            "PYTHONSAFEPATH": "1",
+            "PYTHONHASHSEED": "0",
+        }
+
+    def _worker_error_results(self, directives: list[Directive], error: str) -> dict[str, PyBlockResult]:
+        return {
+            _block_key(directive): PyBlockResult(
+                key=_block_key(directive),
+                status="error",
+                stdout=[],
+                error=error,
+                context={},
+                table=None,
+            )
+            for directive in directives
         }
 
     def _should_execute(
@@ -401,6 +537,7 @@ class PyWorker:
 
 
 def _main() -> int:
+    _harden_runtime()
     payload = json.loads(sys.stdin.read() or "{}")
     blocks = payload.get("blocks", [])
     results = _evaluate_payload(blocks)

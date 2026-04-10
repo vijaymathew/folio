@@ -1,0 +1,46 @@
+[renderer]
+directive_type = "task"
+display_name = "Task"
+description = "Checkbox task widget with due dates and dependency metadata."
+version = "1.0.0"
+supports_inline_source = true
+supports_editing = true
+
+[[params]]
+name = "done"
+default = "\"false\""
+description = "Whether the task is completed."
+
+[[params]]
+name = "due"
+description = "Due date or due label."
+
+[[params]]
+name = "priority"
+description = "Priority label shown in task metadata."
+
+[[params]]
+name = "blocked-by"
+description = "Directive id of the blocking task."
+
+[[params]]
+name = "completed"
+description = "Completion timestamp or label."
+
+[[actions]]
+name = "task.toggle"
+description = "Toggle task completion."
+
+[actions.payload_schema]
+directive = "Directive"
+
+[capabilities]
+events = true
+directive_lookup = true
+
+[sandbox]
+execution_mode = "in-process"
+network = false
+storage = false
+document_text = false
+notes = "Built-in widget renderer. Registry removes ambient document and filesystem access."

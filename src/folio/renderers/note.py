@@ -44,16 +44,23 @@ class NoteWidget(Vertical):
 
 
 class NoteRenderer:
+    manifest_path = Path(__file__).with_name("manifests") / "note.toml"
+
     def render(self, directive: Directive, ctx: RenderContext) -> Static:
+        if ctx.file_access is None:
+            return Static("Renderer capability denied: filesystem_read.", classes="note-widget")
         section = directive.params.get("section", '"full"').strip('"')
-        source_path = self._resolve_source_path(directive, ctx)
+        try:
+            source_path = self._resolve_source_path(directive, ctx)
+        except PermissionError as exc:
+            return Static(str(exc), classes="note-widget")
         if source_path is None:
             return Static("Note source not found.", classes="note-widget")
 
         if not source_path.exists():
             return Static(f"Note source not found: {source_path}", classes="note-widget")
 
-        text = source_path.read_text(encoding="utf-8", errors="replace")
+        text = ctx.file_access.read_text(source_path)
         content, status = self._extract_section(text, section)
         return NoteWidget(directive, source_path, content, status)
 
@@ -68,25 +75,25 @@ class NoteRenderer:
         return None
 
     def _resolve_from_search_roots(self, raw_path: str, ctx: RenderContext) -> Path | None:
+        if ctx.file_access is None:
+            return None
         candidate = Path(raw_path).expanduser()
         if candidate.is_absolute():
-            return candidate
+            try:
+                resolved = ctx.file_access.resolve_document_relative(str(candidate))
+            except PermissionError:
+                return None
+            return resolved if resolved.exists() else None
 
-        search_roots: list[Path] = []
-        if ctx.document_path is not None:
-            base_dir = ctx.document_path.parent.resolve()
-            search_roots.append(base_dir)
-            search_roots.extend(base_dir.parents)
-        search_roots.append(Path.cwd())
-
-        seen: set[Path] = set()
+        search_roots = ctx.file_access.search_roots()
         for root in search_roots:
-            if root in seen:
-                continue
-            seen.add(root)
             for path in _candidate_paths(raw_path, root):
-                if path.exists():
-                    return path.resolve()
+                try:
+                    resolved = ctx.file_access.resolve_document_relative(str(path))
+                except PermissionError:
+                    continue
+                if resolved.exists():
+                    return resolved
         return None
 
     def _extract_section(self, text: str, section: str) -> tuple[str, str]:

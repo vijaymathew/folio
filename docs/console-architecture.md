@@ -98,8 +98,9 @@ folio/
 ### DocumentStore
 
 - Loads and saves the text file.
-- Tracks the current revision in memory.
+- Tracks the current loaded/saved file state in memory for overwrite safety.
 - Exposes line/range-based replacement operations.
+- Leaves version history, rollback, and branching to external tools such as `git`.
 
 ### DirectiveParser
 
@@ -316,10 +317,8 @@ Status key:
 - `done` `DocumentStore` → `DirectiveParser`
 - `done` parser output → renderer registry / render loop
 - `done` renderers → mutation engine → updated text file
-- `partial` directive index
-  The parser emits directive/prose structures with ranges, but there is no separate indexed service.
-- `partial` render engine abstraction
-  The render loop exists, but it is embedded directly in the app rather than factored into its own engine/module.
+- `done` directive index
+- `done` render engine abstraction
 
 ### Core Modules
 
@@ -327,11 +326,10 @@ Status key:
 - `done` `DirectiveParser`
 - `done` `CapabilityRegistry`
 - `done` `MutationEngine`
-- `partial` `EventBus`
-  The bus exists, but the app mostly calls mutation methods directly instead of routing through it.
+- `done` `EventBus`
 - `done` `models.py`
 - `done` `ui/App.py`
-- `not started` `ui/DocumentView.py`
+- `done` `ui/DocumentView.py`
 - `not started` `ui/SourcePane.py`
 - `not started` `ui/MutationLog.py`
 - `done` `renderers/base.py`
@@ -347,22 +345,29 @@ Status key:
 #### DocumentStore
 
 - `done` loads and saves the text file
-- `partial` tracks current revision in memory
-  It caches current text, but does not manage explicit revision ids or history.
-- `not started` exposes line/range replacement operations directly
-  Range replacement currently lives in `MutationEngine`.
+- `done` tracks current loaded/saved file state in memory
+- `done` exposes line/range replacement operations directly
+
+#### Version History
+
+- `done` version management is treated as an external concern
+  Folio relies on the document file as the source of truth and expects tools such as `git` to provide history, diffs, rollback, and branching.
+- `done` overwrite safety remains an internal concern
+  `DocumentStore` detects when the on-disk file changed since load before saving over it.
 
 #### DirectiveParser
 
 - `done` cheap line-oriented parse
 - `done` extracts type, id, params, body, and source range
-- `partial` builds a directive index for rendering/mutation targeting
-  Parsed ranges are sufficient for targeting, but there is no separate reusable index object.
+- `done` builds a directive index for rendering/mutation targeting
 
 #### CapabilityRegistry
 
 - `done` maps directive types to renderer implementations
-- `not started` exposes renderer manifests / capability declarations
+- `done` exposes renderer manifests / capability declarations
+- `done` loads manifests from checked-in TOML files rather than Python-only metadata
+- `done` exposes original manifest source for inspection
+- `done` filters renderer context by declared capabilities before calling `render(...)`
 - `done` allows partial rendering when a directive type is unsupported
   Unknown directives fall back to raw header text.
 
@@ -371,28 +376,27 @@ Status key:
 - `done` converts widget actions into text mutations
 - `done` supports append / replace / delete
 - `partial` applies mutation, then triggers reparse / rerender
-  The apply step is separate; the app coordinates reparse/rerender around it.
+  The apply step is centralized, but the app still owns the parse/render refresh cycle after the mutation commits.
 
 #### EventBus
 
-- `partial` exists
-- `not started` serves as the main connection between renderers and mutation layer
-- `partial` helps keep some UI concerns separated, but is not central to the runtime
+- `done` exists
+- `done` serves as the main connection between renderers and mutation layer
+- `done` keeps UI concerns separated from mutation handling
 
 #### Renderers
 
 - `done` receive parsed directives plus context
 - `done` return Textual widgets
-- `partial` emit semantic actions rather than direct file edits
-  This is true for `task` and `py`; `table` still invokes the mutation callback more directly.
+- `done` emit semantic actions rather than direct file edits
 
 ### UI Layout
 
 - `done` split source pane + rendered pane + bottom status pane
 - `done` editable source buffer
 - `done` mutation/status/error pane
-- `not started` per-directive source/widget toggle
-- `not started` single-pane alternative mode
+- `done` per-directive source/widget toggle
+- `done` single-pane alternative mode
 
 ### Python Execution
 
@@ -404,8 +408,8 @@ Status key:
 - `done` returns exported variables
 - `done` returns table-compatible structured results
 - `done` returns tracebacks / errors
-- `partial` future path to stricter sandboxing
-  There is a constrained execution policy, but it is not a hardened sandbox.
+- `done` hardened sandboxing path
+  The worker now runs under an isolated interpreter with a scrubbed environment, stronger resource limits, and audit-hook blocking for filesystem, process, and network operations. This is still not perfect sandboxing.
 
 ### Data Model
 
@@ -419,10 +423,9 @@ Status key:
 - `done` load document text
 - `done` parse into directives and prose spans
 - `done` build a mixed render tree
-- `not started` render only the visible window plus a small margin
-  Current app rerenders the full document.
+- `done` render only the visible window plus a small margin
 - `partial` emit semantic event → convert to mutation → apply → reparse → rerender
-  The overall loop exists, but event routing is still somewhat direct and app-driven.
+  The mutation commit path is centralized now, but full reparse/rerender orchestration still lives in the app.
 
 ### First Interactive Features
 
@@ -440,8 +443,7 @@ Status key:
 
 - `done` read-only rendering from `table(rows)` output
 - `done` cell editing through text mutations
-- `partial` editing UX
-  Editing works, but it is select-then-edit-via-input rather than direct in-cell typing.
+- `done` direct in-cell editing UX
 
 #### `::note`
 
@@ -463,8 +465,7 @@ Status key:
 - `not started` tabbed views
 - `not started` dialogs
 - `done` editable tables
-- `partial` inline advisories
-  The layout can support them, but there is not yet a dedicated advisory/conflict system.
+- `done` inline advisories
 - `done` mutation logs / status pane
 
 ### Non-Goals For V1

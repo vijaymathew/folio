@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Static
 
 from folio.core.models import Directive
-from folio.renderers.base import RenderContext
+from folio.renderers.base import RenderContext, widget_id_fragment
 
 
 def _bool_param(value: str | None) -> bool:
@@ -21,7 +23,7 @@ class TaskWidget(Vertical):
         self.done = _bool_param(directive.params.get("done"))
         self.title_text = directive.body[0] if directive.body else directive.id or "untitled task"
         self.notes = directive.body[1:]
-        self.button_id = f"toggle-{directive.id or directive.start_line}"
+        self.button_id = f"toggle-{widget_id_fragment(directive.key())}"
         self.border_title = Text(directive.title())
 
     def compose(self) -> ComposeResult:
@@ -39,8 +41,8 @@ class TaskWidget(Vertical):
             yield Static("\n".join(self.notes), classes="task-notes", markup=False)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == self.button_id and self.ctx.toggle_task is not None:
-            self.ctx.toggle_task(self.directive)
+        if event.button.id == self.button_id and self.ctx.events is not None:
+            self.ctx.events.emit("task.toggle", directive=self.directive)
             event.stop()
 
     def _meta_text(self) -> str:
@@ -74,5 +76,7 @@ class TaskWidget(Vertical):
 
 
 class TaskRenderer:
+    manifest_path = Path(__file__).with_name("manifests") / "task.toml"
+
     def render(self, directive: Directive, ctx: RenderContext) -> Static:
         return TaskWidget(directive, ctx)

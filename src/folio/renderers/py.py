@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from rich.text import Text
 from textual.containers import Vertical
 from textual.widgets import Button, Static
 
 from folio.core.models import Directive
-from folio.renderers.base import RenderContext
+from folio.renderers.base import RenderContext, widget_id_fragment
 
 
 class PyBlockWidget(Vertical):
@@ -23,26 +25,29 @@ class PyBlockWidget(Vertical):
         self.ctx = ctx
         self.output = output
         self.key = key
+        self.key_fragment = widget_id_fragment(key)
         self.code = code
         self.run_mode = run_mode
         self.border_title = Text(f"{directive.title()} [{run_mode}]")
 
     def compose(self):
         if self.run_mode == "manual":
-            yield Button("Run", id=f"run-py-{self.key}", compact=True, classes="py-run")
+            yield Button("Run", id=f"run-py-{self.key_fragment}", compact=True, classes="py-run")
         yield Static(self.code, classes="py-code", markup=False)
         yield Static(self.output, classes="py-output", markup=False)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == f"run-py-{self.key}" and self.ctx.run_py is not None:
-            self.ctx.run_py(self.directive)
+        if event.button.id == f"run-py-{self.key_fragment}" and self.ctx.events is not None:
+            self.ctx.events.emit("py.run", directive=self.directive)
             event.stop()
 
 
 class PyRenderer:
+    manifest_path = Path(__file__).with_name("manifests") / "py.toml"
+
     def render(self, directive: Directive, ctx: RenderContext) -> Static:
         code = "\n".join(directive.body) if directive.body else directive.header_line
-        key = directive.id or str(directive.start_line)
+        key = directive.key()
         run_mode = directive.params.get("run", '"manual"').strip('"')
         result = (ctx.py_results or {}).get(key)
         if result is None:

@@ -13,7 +13,21 @@ Minimal Textual scaffold for a console-first Folio prototype.
 
 This is intentionally small. It is a starting point for validating the text-first architecture in a console renderer.
 
-## Run
+Renderer and registry authoring notes live in [docs/renderer-interface.md](/home/vijay/Projects/folio/docs/renderer-interface.md).
+
+## Installation
+
+To install Folio globally on your system:
+
+```bash
+bash install.sh
+```
+
+This will set up an isolated environment in `~/.local/share/folio` and add the `folio` command to your `~/.local/bin`.
+
+## Run (Development)
+
+For local development or to run without installing:
 
 ```bash
 python -m venv .venv
@@ -22,13 +36,22 @@ pip install -e .
 folio docs/example.folio
 ```
 
+## Tests
+
+```bash
+pip install -e ".[dev]"
+pytest
+```
+
 ## Controls
 
 - `q`: quit
 - `r`: reload document from disk
+- `f6`: switch between the default single-pane view and split-pane view
 - edit the source pane directly, then press `Ctrl+S` to save, reparse, and rerender
-- click `Toggle` on a task to write a text mutation back to the source file
+- click a task checkbox to write a text mutation back to the source file
 - click `Run` on a `::py` block to execute document-scoped Python in a subprocess worker
+- click `Source` / `Widget` above a directive to toggle its rendered view
 
 ## Scope
 
@@ -39,8 +62,21 @@ Only document-owned state is in scope for this scaffold:
 - `::table`
 - `::note`
 - `::file`
+- `::web` as an experimental text-only reader
 
-Remote backends are intentionally excluded from this first cut.
+Remote backends are otherwise intentionally excluded from this first cut.
+
+## Renderer Manifests
+
+Built-in renderers now register through checked-in TOML manifests under [src/folio/renderers/manifests](/home/vijay/Projects/folio/src/folio/renderers/manifests).
+
+The capability registry uses those manifests to:
+
+- discover renderer params and actions
+- expose manifest source for inspection
+- filter runtime renderer context by declared capabilities
+
+This gives Folio an explicit manifest/runtime boundary for built-in renderers. It is still lighter-weight than full per-renderer process isolation; only `::py` currently runs in a hardened subprocess sandbox.
 
 ## Python Execution
 
@@ -52,13 +88,15 @@ Remote backends are intentionally excluded from this first cut.
 - manual blocks execute when `Run` is pressed
 - stdout and tracebacks are returned to the renderer without running code in the main TUI process
 
-The worker uses a constrained execution policy:
+The worker uses a hardened sandbox policy:
 
 - only a small safe subset of builtins is exposed
 - imports are restricted to an explicit allowlist
 - dangerous names like `open`, `eval`, `exec`, and `__import__` are blocked
 - function/class definitions, `try`, `with`, `raise`, and `while` are rejected
-- subprocess execution is time-limited, with resource limits applied where the platform supports them
+- the worker runs in an isolated interpreter (`-I -S -B`) with a scrubbed environment and temp working directory
+- subprocess execution is time-limited, with stricter CPU, memory, file-size, descriptor, and core-dump limits where the platform supports them
+- Python audit hooks block filesystem, process, and network operations even if user code escapes the AST-level restrictions
 
 The allowlist currently includes common document-compute modules such as:
 
@@ -74,7 +112,11 @@ The allowlist currently includes common document-compute modules such as:
 - `string`
 - `textwrap`
 
+This is substantially stronger than the earlier “safe subset” worker, but it is still not a formal kernel-enforced sandbox against malicious native code or CPython escape bugs.
+
 `table(rows)` is also available inside `::py` blocks. When a block calls it with a list of dictionaries, the corresponding `::table` renderer can display those structured rows directly.
+
+`::table` supports direct keyboard editing in the grid itself: move the cell cursor with the arrow keys, type to replace the highlighted value, press `Enter` to save the text mutation, and press `Esc` to cancel the active edit.
 
 `::note` directives can resolve a section from a local `.md`, `.folio`, or `.txt` file. If `path="..."` is omitted, Folio will try to resolve the note id as a document-relative file name.
 
@@ -83,6 +125,8 @@ The bottom status pane surfaces:
 - autorun completion
 - manual worker runs
 - safety policy failures
+- external-change save conflicts
+- inline advisories
 - source buffer dirty/save state
 - task toggles
 - table-edit mutations

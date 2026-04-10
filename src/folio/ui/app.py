@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 from textual.app import App, ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Footer, Header, Static, TextArea
 
@@ -12,17 +14,22 @@ from folio.core.models import Directive, DocumentModel, TextMutation
 from folio.core.mutations import MutationEngine
 from folio.core.parser import DirectiveParser
 from folio.core.registry import CapabilityRegistry
-from folio.core.store import DocumentStore
+from folio.core.store import DocumentConflictError, DocumentStore
+from folio.core.web_reader import WebReader, resolve_web_url
 from folio.python.worker import PyWorker
-from folio.renderers.base import RenderContext
+from folio.renderers.base import AdvisoryAction, AdvisorySpec, RenderContext
 from folio.renderers.file import FileRenderer
 from folio.renderers.note import NoteRenderer
 from folio.renderers.py import PyRenderer
 from folio.renderers.table import TableRenderer
 from folio.renderers.task import TaskRenderer
+from folio.renderers.web import WebRenderer
+from folio.ui.document_view import DocumentView
 
 
 class FolioApp(App[None]):
+    LAYOUT_BINDING_ID = "toggle-layout-mode"
+
     CSS = """
     Screen {
       layout: vertical;
@@ -104,24 +111,10 @@ class FolioApp(App[None]):
       padding: 1;
       margin-bottom: 1;
     }
-    .table-editor-controls {
-      height: auto;
-      margin-top: 1;
-    }
-    .table-editor-input-row {
-      height: auto;
-      margin-top: 1;
-    }
     #table-edit-status {
       height: auto;
       margin-top: 1;
-    }
-    #table-edit-input {
-      width: 1fr;
-    }
-    #table-apply {
-      width: 10;
-      margin-left: 1;
+      color: $text-muted;
     }
     .file-widget {
       height: auto;
@@ -151,15 +144,80 @@ class FolioApp(App[None]):
     .note-content {
       height: auto;
     }
+    .web-widget {
+      height: auto;
+      border: round $surface-lighten-1;
+      padding: 1;
+      margin-bottom: 1;
+    }
+    .web-toolbar {
+      height: auto;
+      margin-bottom: 1;
+    }
+    .web-meta {
+      width: 1fr;
+      color: $text-muted;
+    }
+    .web-reload {
+      width: 12;
+    }
+    .web-content {
+      height: auto;
+    }
+    .directive-container {
+      height: auto;
+      margin-bottom: 1;
+    }
+    .directive-toolbar {
+      height: auto;
+      margin-bottom: 1;
+    }
+    .directive-title {
+      width: 1fr;
+      color: $text-muted;
+    }
+    .directive-toggle {
+      width: 12;
+    }
+    .directive-source {
+      height: auto;
+      border: round $surface-lighten-1;
+      padding: 1;
+    }
+    .advisory-widget {
+      height: auto;
+      border: round $surface-lighten-1;
+      padding: 1;
+      margin-bottom: 1;
+    }
+    .advisory-warning {
+      border: round $warning;
+    }
+    .advisory-error {
+      border: round $error;
+    }
+    .advisory-title {
+      text-style: bold;
+      height: auto;
+      margin-bottom: 1;
+    }
+    .advisory-message {
+      height: auto;
+    }
+    .advisory-actions {
+      height: auto;
+      margin-top: 1;
+    }
     Button {
       min-width: 10;
     }
     """
 
     BINDINGS = [
-        ("q", "quit", "Quit"),
-        ("r", "reload_document", "Reload"),
-        ("ctrl+s", "save_source", "Save"),
+        Binding("q", "quit", "Quit"),
+        Binding("r", "reload_document", "Reload"),
+        Binding("ctrl+s", "save_source", "Save"),
+        Binding("f6", "toggle_single_pane", "Split Pane", id=LAYOUT_BINDING_ID),
     ]
 
     def __init__(self, document_path: Path) -> None:
@@ -172,17 +230,36 @@ class FolioApp(App[None]):
         self.registry = CapabilityRegistry()
         self.model = DocumentModel(text="")
         self.py_worker = PyWorker()
+        self.web_reader = WebReader()
         self.py_results = {}
+        self.web_results = {}
         self._loading_source = False
         self._source_dirty = False
+        self._single_pane_mode = True
+        self._source_view_keys: set[str] = set()
+        self._dismissed_advisories: set[str] = set()
+        self._active_conflict_message: str | None = None
+        self._subscribe_events()
         self._register_renderers()
 
     def _register_renderers(self) -> None:
-        self.registry.register("task", TaskRenderer)
-        self.registry.register("py", PyRenderer)
-        self.registry.register("table", TableRenderer)
-        self.registry.register("note", NoteRenderer)
-        self.registry.register("file", FileRenderer)
+        self.registry.register(TaskRenderer)
+        self.registry.register(PyRenderer)
+        self.registry.register(TableRenderer)
+        self.registry.register(NoteRenderer)
+        self.registry.register(FileRenderer)
+        self.registry.register(WebRenderer)
+
+    def _subscribe_events(self) -> None:
+        self.events.subscribe("task.toggle", self.toggle_task)
+        self.events.subscribe("py.run", self.run_py_block)
+        self.events.subscribe("table.edit", self.update_table_directive)
+        self.events.subscribe("directive.toggle_view", self.toggle_directive_view)
+        self.events.subscribe("directive.source_edit", self.update_directive_source_buffer)
+        self.events.subscribe("web.reload", self.reload_web_directive)
+        self.events.subscribe("ui.toggle_single_pane", self.toggle_single_pane)
+        self.events.subscribe("advisory.dismiss", self.dismiss_advisory)
+        self.events.subscribe("document.reload", self.handle_reload_request)
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -196,90 +273,55 @@ class FolioApp(App[None]):
                     soft_wrap=False,
                     show_line_numbers=True,
                 )
-            yield VerticalScroll(id="render-pane")
+            yield DocumentView(id="render-pane")
         yield VerticalScroll(id="status-pane")
         yield Footer()
 
     def on_mount(self) -> None:
         self._reset_status_pane()
+        self._refresh_layout_binding()
         self.reload_document()
+        self.refresh_bindings()
 
     def action_reload_document(self) -> None:
         self.reload_document()
 
     def action_save_source(self) -> None:
         editor = self.query_one("#source-editor", TextArea)
-        self.store.save(editor.text)
-        self._source_dirty = False
-        self._set_source_title()
-        self.log_status(f"Saved source document to {self.document_path}.")
-        self.reload_document()
+        self._save_source_text(editor.text)
+
+    def action_toggle_single_pane(self) -> None:
+        self.toggle_single_pane()
 
     def reload_document(self) -> None:
         text = self.store.load()
+        self._active_conflict_message = None
         model = self.parser.parse(text)
         self.model = model
         self.py_results = self._run_autorun_blocks()
+        self.web_results = self._run_web_autofetch(model)
 
         editor = self.query_one("#source-editor", TextArea)
-        self._loading_source = True
-        editor.load_text(text)
-        self._loading_source = False
+        self._set_source_editor_text(text)
         self._source_dirty = False
         self._set_source_title()
 
-        render = self.query_one("#render-pane", VerticalScroll)
-        render.remove_children()
-        render.mount(Static("Rendered", classes="pane-title"))
-
-        ctx = RenderContext(
-            toggle_task=self.toggle_task,
-            run_py=self.run_py_block,
-            update_table=self.update_table_directive,
-            py_results=self.py_results,
-            document_path=self.document_path,
-            directives_by_id={item.id: item for item in model.directives if item.id},
-        )
-        prose_index = 0
-        directives = iter(model.directives)
-        current = next(directives, None)
-
-        for line_no, line in enumerate(text.splitlines() or [""]):
-            while prose_index < len(model.prose) and model.prose[prose_index].start_line == line_no:
-                block = model.prose[prose_index]
-                if any(part.strip() for part in block.lines):
-                    render.mount(Static("\n".join(block.lines)))
-                prose_index += 1
-            while current and current.start_line == line_no:
-                renderer = self.registry.create(current.type)
-                widget = renderer.render(current, ctx) if renderer else Static(current.header_line)
-                render.mount(widget)
-                current = next(directives, None)
-
-        render.refresh(repaint=True, layout=True)
+        self._apply_layout_mode()
+        ctx = self._build_render_context(model)
+        render = self.query_one("#render-pane", DocumentView)
+        render.render_document(model, self.registry, ctx, title=self._render_title())
         self._log_autorun_results()
 
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
         if event.text_area.id != "source-editor" or self._loading_source:
             return
-        if not self._source_dirty:
-            self._source_dirty = True
-            self._set_source_title()
-            self.log_status("Source buffer modified. Press Ctrl+S to save and reparse.")
+        self._mark_source_dirty()
 
     def _find_directive(self, directive_type: str, target: str) -> Directive | None:
-        return next(
-            (
-                item
-                for item in self.model.directives
-                if item.type == directive_type
-                and str(item.id or item.start_line) == target
-            ),
-            None,
-        )
+        return self.model.directive_index.find(directive_type, target)
 
     def _py_directives(self) -> list[Directive]:
-        return [item for item in self.model.directives if item.type == "py"]
+        return self.model.directive_index.directives_of_type("py")
 
     def _run_autorun_blocks(self) -> dict[str, object]:
         directives = self._py_directives()
@@ -287,9 +329,20 @@ class FolioApp(App[None]):
             return {}
         return self.py_worker.run_document(directives, autorun_only=True)
 
+    def _web_directives(self) -> list[Directive]:
+        return self.model.directive_index.directives_of_type("web")
+
+    def _run_web_autofetch(self, model: DocumentModel) -> dict[str, object]:
+        results: dict[str, object] = {}
+        for directive in model.directive_index.directives_of_type("web"):
+            load_mode = directive.params.get("load", '"auto"').strip('"')
+            if load_mode != "manual":
+                results[directive.key()] = self._fetch_web_directive(directive)
+        return results
+
     def run_py_block(self, directive: Directive) -> None:
         self.log_status(f"Running {directive.title()} in subprocess worker.")
-        key = directive.id or str(directive.start_line)
+        key = directive.key()
         results = self.py_worker.run_document(
             self._py_directives(),
             trigger_key=key,
@@ -306,39 +359,22 @@ class FolioApp(App[None]):
                 self.log_status(f"{directive.title()} failed: {result.error}", error=True)
         self.reload_render_pane()
 
+    def reload_web_directive(self, directive: Directive) -> None:
+        self.log_status(f"Fetching {directive.title()} in text-only reader.")
+        result = self._fetch_web_directive(directive)
+        self.web_results[directive.key()] = result
+        if result.status == "ok":
+            self.log_status(f"{directive.title()} fetched successfully from {result.url}.")
+        else:
+            self.log_status(f"{directive.title()} failed: {result.error}", error=True)
+        self.reload_render_pane()
+
     def reload_render_pane(self) -> None:
-        text = self.store.get_text()
         model = self.model
-
-        render = self.query_one("#render-pane", VerticalScroll)
-        render.remove_children()
-        render.mount(Static("Rendered", classes="pane-title"))
-
-        ctx = RenderContext(
-            toggle_task=self.toggle_task,
-            run_py=self.run_py_block,
-            update_table=self.update_table_directive,
-            py_results=self.py_results,
-            document_path=self.document_path,
-            directives_by_id={item.id: item for item in model.directives if item.id},
-        )
-        prose_index = 0
-        directives = iter(model.directives)
-        current = next(directives, None)
-
-        for line_no, _line in enumerate(text.splitlines() or [""]):
-            while prose_index < len(model.prose) and model.prose[prose_index].start_line == line_no:
-                block = model.prose[prose_index]
-                if any(part.strip() for part in block.lines):
-                    render.mount(Static("\n".join(block.lines)))
-                prose_index += 1
-            while current and current.start_line == line_no:
-                renderer = self.registry.create(current.type)
-                widget = renderer.render(current, ctx) if renderer else Static(current.header_line)
-                render.mount(widget)
-                current = next(directives, None)
-
-        render.refresh(repaint=True, layout=True)
+        self._apply_layout_mode()
+        ctx = self._build_render_context(model)
+        render = self.query_one("#render-pane", DocumentView)
+        render.render_document(model, self.registry, ctx, title=self._render_title())
 
     def toggle_task(self, directive: Directive) -> None:
         done = directive.params.get("done", '"false"').strip('"').lower() == "true"
@@ -356,17 +392,20 @@ class FolioApp(App[None]):
             new_text=header,
             source="task.toggle",
         )
-        self.mutations.apply(mutation)
-        self.log_status(f"{directive.title()} toggled -> done={directive.params['done']}.")
-        self.reload_document()
+        if self._apply_mutation(mutation, success_message=f"{directive.title()} toggled -> done={directive.params['done']}."):
+            return
 
     def update_table_directive(self, directive: Directive, rows: list[dict[str, object]]) -> None:
         params = dict(directive.params)
         params.pop("source", None)
         params["editable"] = '"true"'
-        self._replace_table_directive(directive, rows, params=params, source="table.edit")
-        self.log_status(f"{directive.title()} updated from widget edit; source rows materialized into document.")
-        self.reload_document()
+        self._replace_table_directive(
+            directive,
+            rows,
+            params=params,
+            source="table.edit",
+            success_message=f"{directive.title()} updated from widget edit; source rows materialized into document.",
+        )
 
     def _replace_table_directive(
         self,
@@ -375,6 +414,7 @@ class FolioApp(App[None]):
         *,
         params: dict[str, str],
         source: str,
+        success_message: str | None = None,
     ) -> None:
         header = self._directive_header(directive.type, directive.id, params)
         body = [json.dumps(row, ensure_ascii=True) for row in rows]
@@ -386,7 +426,7 @@ class FolioApp(App[None]):
             new_text=new_text,
             source=source,
         )
-        self.mutations.apply(mutation)
+        self._apply_mutation(mutation, success_message=success_message)
 
     def _directive_header(self, directive_type: str, directive_id: str | None, params: dict[str, str]) -> str:
         ident = f"[{directive_id}]" if directive_id else ""
@@ -415,3 +455,203 @@ class FolioApp(App[None]):
                 self.log_status(f"Autorun ::py[{key}] completed.")
             elif result.status == "error":
                 self.log_status(f"Autorun ::py[{key}] failed: {result.error}", error=True)
+
+    def _save_source_text(self, text: str) -> bool:
+        try:
+            self.store.save(text)
+        except DocumentConflictError as exc:
+            self._active_conflict_message = str(exc)
+            self.log_status(str(exc), error=True)
+            self.reload_render_pane()
+            return False
+
+        self._source_dirty = False
+        self._set_source_title()
+        self.log_status(f"Saved source document to {self.document_path}.")
+        self.reload_document()
+        return True
+
+    def _apply_mutation(self, mutation: TextMutation, *, success_message: str | None = None) -> bool:
+        try:
+            self.mutations.apply(mutation)
+        except DocumentConflictError as exc:
+            self._active_conflict_message = str(exc)
+            self.log_status(str(exc), error=True)
+            self.reload_document()
+            return False
+
+        if success_message:
+            self.log_status(success_message)
+        self.reload_document()
+        return True
+
+    def toggle_directive_view(self, directive: Directive) -> None:
+        key = directive.key()
+        if key in self._source_view_keys:
+            self._source_view_keys.remove(key)
+            self.log_status(f"{directive.title()} switched to widget view.")
+        else:
+            self._source_view_keys.add(key)
+            self.log_status(f"{directive.title()} switched to source view.")
+        self.reload_render_pane()
+
+    def update_directive_source_buffer(self, directive: Directive, previous_text: str, new_text: str) -> None:
+        editor = self.query_one("#source-editor", TextArea)
+        updated_text = self._replace_directive_text(editor.text, directive, previous_text, new_text)
+        if updated_text is None:
+            self.log_status(
+                f"{directive.title()} source could not be synced into the main buffer. Save or reload before editing inline again.",
+                error=True,
+            )
+            return
+        if updated_text == editor.text:
+            return
+        self._set_source_editor_text(updated_text)
+        self._mark_source_dirty()
+
+    def toggle_single_pane(self) -> None:
+        self._single_pane_mode = not self._single_pane_mode
+        self._refresh_layout_binding()
+        state = "single-pane" if self._single_pane_mode else "split-pane"
+        self.log_status(f"Layout switched to {state} mode.")
+        self.reload_render_pane()
+
+    def dismiss_advisory(self, advisory_id: str) -> None:
+        self._dismissed_advisories.add(advisory_id)
+        self.reload_render_pane()
+
+    def handle_reload_request(self, advisory_id: str | None = None) -> None:
+        if advisory_id is not None:
+            self._dismissed_advisories.discard(advisory_id)
+        self.log_status(f"Reloaded {self.document_path} from disk.")
+        self.reload_document()
+
+    def _build_render_context(self, model: DocumentModel) -> RenderContext:
+        editor = self.query_one("#source-editor", TextArea)
+        return RenderContext(
+            events=self.events,
+            py_results=self.py_results,
+            web_results=self.web_results,
+            document_path=self.document_path,
+            source_text=editor.text,
+            directives_by_id=model.directive_index.by_id,
+            directive_source_view=set(self._source_view_keys),
+            advisories=self._build_advisories(model),
+            single_pane_mode=self._single_pane_mode,
+        )
+
+    def _build_advisories(self, model: DocumentModel) -> list[AdvisorySpec]:
+        advisories: list[AdvisorySpec] = []
+        line_count = len(model.text.splitlines())
+
+        if line_count >= 40 and "document-size" not in self._dismissed_advisories:
+            advisories.append(
+                AdvisorySpec(
+                    id="document-size",
+                    title="Large Document",
+                    message=(
+                        f"This document has {line_count} lines ({len(model.directives)} directives). "
+                        "Use single-pane mode or directive source toggles to reduce visual load."
+                    ),
+                    actions=[
+                        AdvisoryAction("single-pane", "single pane", "ui.toggle_single_pane"),
+                        AdvisoryAction("dismiss", "dismiss", "advisory.dismiss"),
+                    ],
+                    level="warning",
+                )
+            )
+
+        if self._active_conflict_message is not None and "external-change" not in self._dismissed_advisories:
+            advisories.append(
+                AdvisorySpec(
+                    id="external-change",
+                    title="External Change Detected",
+                    message=self._active_conflict_message,
+                    actions=[
+                        AdvisoryAction("reload", "reload", "document.reload"),
+                        AdvisoryAction("dismiss", "dismiss", "advisory.dismiss"),
+                    ],
+                    level="error",
+                )
+            )
+
+        return advisories
+
+    def _apply_layout_mode(self) -> None:
+        source_pane = self.query_one("#source-pane", Vertical)
+        render_pane = self.query_one("#render-pane", DocumentView)
+        if self._single_pane_mode:
+            source_pane.styles.display = "none"
+            render_pane.styles.width = "100%"
+        else:
+            source_pane.styles.display = "block"
+            render_pane.styles.width = "1fr"
+
+    def _render_title(self) -> str:
+        return "Document (Single Pane)" if self._single_pane_mode else "Rendered"
+
+    def _set_source_editor_text(self, text: str) -> None:
+        editor = self.query_one("#source-editor", TextArea)
+        self._loading_source = True
+        editor.load_text(text)
+        self._loading_source = False
+
+    def _mark_source_dirty(self) -> None:
+        if self._source_dirty:
+            return
+        self._source_dirty = True
+        self._set_source_title()
+        self.log_status("Source buffer modified. Press Ctrl+S to save and reparse.")
+
+    def _replace_directive_text(
+        self,
+        buffer_text: str,
+        directive: Directive,
+        previous_text: str,
+        new_text: str,
+    ) -> str | None:
+        lines = buffer_text.splitlines()
+        if directive.start_line <= directive.end_line and directive.end_line < len(lines):
+            current_slice = "\n".join(lines[directive.start_line : directive.end_line + 1])
+            if current_slice == previous_text:
+                replacement = [new_text] if new_text else []
+                lines[directive.start_line : directive.end_line + 1] = replacement
+                return "\n".join(lines)
+
+        occurrences = buffer_text.count(previous_text)
+        if occurrences == 1:
+            return buffer_text.replace(previous_text, new_text, 1)
+
+        return None
+
+    def _layout_binding_description(self) -> str:
+        return "Split Pane" if self._single_pane_mode else "Single Pane"
+
+    def _fetch_web_directive(self, directive: Directive):
+        manifest = self.registry.manifest_for("web")
+        url = resolve_web_url(directive.id or directive.params.get("url", '"unknown"'))
+        allowed_origins = manifest.sandbox.allowed_origins if manifest is not None else ["*"]
+        max_fetch_bytes = manifest.sandbox.max_fetch_bytes if manifest is not None else 262144
+        timeout_seconds = manifest.sandbox.timeout_seconds if manifest is not None else 5.0
+        return self.web_reader.fetch(
+            directive.key(),
+            url,
+            allowed_origins=allowed_origins,
+            max_fetch_bytes=max_fetch_bytes,
+            timeout_seconds=timeout_seconds,
+        )
+
+    def _refresh_layout_binding(self) -> None:
+        description = self._layout_binding_description()
+        for key, bindings in list(self._bindings.key_to_bindings.items()):
+            updated = False
+            new_bindings: list[Binding] = []
+            for binding in bindings:
+                if binding.id == self.LAYOUT_BINDING_ID:
+                    new_bindings.append(replace(binding, description=description))
+                    updated = True
+                else:
+                    new_bindings.append(binding)
+            if updated:
+                self._bindings.key_to_bindings[key] = new_bindings
+        self.refresh_bindings()

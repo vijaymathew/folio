@@ -10,6 +10,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Footer, Header, Static, TextArea
 
 from folio.core.events import EventBus
+from folio.core.contact_reader import ContactCard, ContactReader, ContactReaderError
 from folio.core.models import Directive, DocumentModel, TextMutation
 from folio.core.mutations import MutationEngine
 from folio.core.parser import DirectiveParser
@@ -19,6 +20,7 @@ from folio.core.store import DocumentConflictError, DocumentStore
 from folio.core.web_reader import WebReader, resolve_web_url
 from folio.python.worker import PyWorker
 from folio.renderers.base import AdvisoryAction, AdvisorySpec, RenderContext
+from folio.renderers.contact import ContactRenderer
 from folio.renderers.file import FileRenderer
 from folio.renderers.note import NoteRenderer
 from folio.renderers.py import PyRenderer
@@ -131,6 +133,33 @@ class FolioApp(App[None]):
     }
     .file-content {
       height: auto;
+    }
+    .contact-widget {
+      height: auto;
+      border: round $surface-lighten-1;
+      padding: 1;
+      margin-bottom: 1;
+    }
+    .contact-meta, .contact-more {
+      color: $text-muted;
+      height: auto;
+      margin-bottom: 1;
+    }
+    .contact-card, .contact-empty, .contact-status {
+      height: auto;
+      margin-bottom: 1;
+    }
+    .contact-form, .contact-field, .contact-actions {
+      height: auto;
+    }
+    .contact-field {
+      margin-bottom: 1;
+    }
+    .contact-input {
+      width: 1fr;
+    }
+    .contact-save {
+      width: 12;
     }
     .note-widget {
       height: auto;
@@ -260,6 +289,7 @@ class FolioApp(App[None]):
         self.py_worker = PyWorker()
         self.sh_runner = ShRunner()
         self.web_reader = WebReader()
+        self.contact_reader = ContactReader()
         self.py_results = {}
         self.web_results = {}
         self._loading_source = False
@@ -280,6 +310,7 @@ class FolioApp(App[None]):
         self.registry.register(TableRenderer)
         self.registry.register(NoteRenderer)
         self.registry.register(FileRenderer)
+        self.registry.register(ContactRenderer)
         self.registry.register(WebRenderer)
 
     def _subscribe_events(self) -> None:
@@ -287,6 +318,7 @@ class FolioApp(App[None]):
         self.events.subscribe("py.run", self.run_py_block)
         self.events.subscribe("sh.run", self.run_sh_block)
         self.events.subscribe("table.edit", self.update_table_directive)
+        self.events.subscribe("contact.save", self.save_contact)
         self.events.subscribe("directive.toggle_view", self.toggle_directive_view)
         self.events.subscribe("directive.source_edit", self.update_directive_source_buffer)
         self.events.subscribe("web.reload", self.reload_web_directive)
@@ -463,6 +495,57 @@ class FolioApp(App[None]):
             source="table.edit",
             success_message=f"{directive.title()} updated from widget edit; source rows materialized into document.",
         )
+
+    def save_contact(
+        self,
+        directive: Directive,
+        path: str,
+        card_index: int,
+        full_name: str,
+        title: str,
+        organization: str,
+        role: str,
+        emails: list[str],
+        phones: list[str],
+        addresses: list[str],
+        note: str,
+    ) -> None:
+        base_ctx = self._build_render_context(self.model)
+        ctx = self.registry.context_for("contact", base_ctx)
+        if ctx.file_access is None:
+            self.log_status(f"{directive.title()} save blocked: renderer file access unavailable.", error=True)
+            return
+
+        try:
+            source_path = ctx.file_access.resolve_document_relative(path)
+            cards = self.contact_reader.read_path(source_path, ctx.file_access)
+            if not source_path.is_file():
+                self.log_status(f"{directive.title()} save is only supported for a single .vcf file.", error=True)
+                return
+            if card_index < 0 or card_index >= len(cards):
+                self.log_status(f"{directive.title()} save failed: contact index is no longer valid.", error=True)
+                return
+
+            original = cards[card_index]
+            cards[card_index] = ContactCard(
+                full_name=full_name or original.full_name,
+                emails=emails,
+                phones=phones,
+                organization=organization or None,
+                title=title or None,
+                role=role or None,
+                addresses=addresses,
+                note=note or None,
+                source=original.source,
+                index=original.index,
+            )
+            self.contact_reader.write_path(source_path, cards, ctx.file_access)
+        except (ContactReaderError, PermissionError, OSError) as exc:
+            self.log_status(f"{directive.title()} save failed: {exc}", error=True)
+            return
+
+        self.log_status(f"{directive.title()} saved to {source_path}.")
+        self.reload_render_pane()
 
     def _replace_table_directive(
         self,

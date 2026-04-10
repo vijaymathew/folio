@@ -1,0 +1,29 @@
+[renderer]
+directive_type = "contact"
+display_name = "Contact"
+description = "Read-only vCard contact renderer backed by local .vcf files."
+version = "1.0.0"
+supports_inline_source = true
+supports_editing = true
+
+[[params]]
+name = "path"
+description = "Optional explicit path when the directive id is not the vCard file or directory path."
+
+[[params]]
+name = "limit"
+default = "6"
+description = "Maximum number of contacts to display when the source contains multiple vCards."
+
+[capabilities]
+events = true
+document_path = true
+filesystem_read = true
+filesystem_write = true
+
+[sandbox]
+execution_mode = "in-process"
+network = false
+storage = true
+document_text = false
+notes = "Renderer reads local vCard files only through the registry-provided file access service."

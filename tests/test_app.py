@@ -5,11 +5,12 @@ import shutil
 from pathlib import Path
 
 from folio.core.models import ShRunResult, WebLink, WebPageResult
+from folio.renderers.contact import ContactWidget
 from folio.renderers.base import widget_id_fragment
 from folio.renderers.table import TableEditor
 from folio.ui.document_view import DocumentView
 from folio.ui.app import FolioApp
-from textual.widgets import Button, DataTable, TextArea
+from textual.widgets import Button, DataTable, Input, TextArea
 
 
 def test_task_checkbox_click_rewrites_source(tmp_path: Path) -> None:
@@ -258,6 +259,80 @@ def test_web_reader_fetches_text_only_page(tmp_path: Path) -> None:
             assert result.links[0].url.endswith("/docs")
 
     asyncio.run(scenario())
+
+
+def test_contact_renderer_reads_local_vcard_file(tmp_path: Path) -> None:
+    contacts_dir = tmp_path / "contacts"
+    contacts_dir.mkdir()
+    (contacts_dir / "sara.vcf").write_text(
+        "\n".join(
+            [
+                "BEGIN:VCARD",
+                "VERSION:3.0",
+                "FN:Sara Chen",
+                "EMAIL;TYPE=work:sara@example.com",
+                "ORG:Northwind Labs",
+                "TITLE:Finance Lead",
+                "END:VCARD",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    doc = tmp_path / "contacts.folio"
+    doc.write_text("::contact[contacts/sara.vcf]\n", encoding="utf-8")
+
+    async def scenario() -> None:
+        app = FolioApp(doc)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause(0.2)
+            widget = app.query_one(ContactWidget)
+            assert len(widget.contacts) == 1
+            assert widget.contacts[0].full_name == "Sara Chen"
+            assert widget.contacts[0].emails == ["sara@example.com"]
+
+    asyncio.run(scenario())
+
+
+def test_contact_widget_edits_and_saves_vcard_file(tmp_path: Path) -> None:
+    contacts_dir = tmp_path / "contacts"
+    contacts_dir.mkdir()
+    contact_path = contacts_dir / "sara.vcf"
+    contact_path.write_text(
+        "\n".join(
+            [
+                "BEGIN:VCARD",
+                "VERSION:3.0",
+                "FN:Sara Chen",
+                "EMAIL;TYPE=work:sara@example.com",
+                "ORG:Northwind Labs",
+                "TITLE:Finance Lead",
+                "END:VCARD",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    doc = tmp_path / "contacts.folio"
+    doc.write_text("::contact[contacts/sara.vcf]\n", encoding="utf-8")
+
+    async def scenario() -> None:
+        app = FolioApp(doc)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.2)
+            app.query_one("#contact-title-contacts-sara-vcf", Input).value = "VP Finance"
+            app.query_one("#contact-emails-contacts-sara-vcf", Input).value = "sara@example.com, finance@example.com"
+            app.query_one("#contact-note-contacts-sara-vcf", Input).value = "Budget owner"
+            app.query_one("#save-contact-contacts-sara-vcf", Button).press()
+            await pilot.pause(0.3)
+
+    asyncio.run(scenario())
+
+    updated = contact_path.read_text(encoding="utf-8")
+    assert "TITLE:VP Finance" in updated
+    assert "EMAIL;TYPE=internet:sara@example.com" in updated
+    assert "EMAIL;TYPE=internet:finance@example.com" in updated
+    assert "NOTE:Budget owner" in updated
 
 
 def test_sh_run_writes_output_block_and_rerun_replaces_it(tmp_path: Path) -> None:

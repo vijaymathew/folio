@@ -4,6 +4,7 @@ from pathlib import Path
 
 from folio.core.registry import CapabilityRegistry
 from folio.renderers.base import RenderContext
+from folio.renderers.contact import ContactRenderer
 from folio.renderers.file import FileRenderer
 from folio.renderers.note import NoteRenderer
 from folio.renderers.py import PyRenderer
@@ -15,7 +16,7 @@ from folio.renderers.web import WebRenderer
 
 def _registry() -> CapabilityRegistry:
     registry = CapabilityRegistry()
-    for renderer in (TaskRenderer, PyRenderer, ShRenderer, ShOutputRenderer, TableRenderer, NoteRenderer, FileRenderer, WebRenderer):
+    for renderer in (TaskRenderer, PyRenderer, ShRenderer, ShOutputRenderer, TableRenderer, NoteRenderer, FileRenderer, ContactRenderer, WebRenderer):
         registry.register(renderer)
     return registry
 
@@ -23,7 +24,7 @@ def _registry() -> CapabilityRegistry:
 def test_registry_exposes_supported_types_and_manifests() -> None:
     registry = _registry()
 
-    assert registry.supported_types() == ["file", "note", "py", "sh", "sh-output", "table", "task", "web"]
+    assert registry.supported_types() == ["contact", "file", "note", "py", "sh", "sh-output", "table", "task", "web"]
     assert registry.manifest_for("task") is TaskRenderer.manifest
     assert registry.manifest_for("py") is PyRenderer.manifest
     assert registry.manifest_for("task").manifest_path == TaskRenderer.manifest_path
@@ -99,3 +100,7 @@ def test_registry_filters_render_context_by_declared_capabilities(tmp_path: Path
     assert sh_ctx.events is base_ctx.events
     assert sh_ctx.directive_find is base_ctx.directive_find
     assert sh_ctx.document_trusted is base_ctx.document_trusted
+
+    contact_ctx = registry.context_for("contact", base_ctx)
+    assert contact_ctx.file_access is not None
+    assert contact_ctx.events is base_ctx.events

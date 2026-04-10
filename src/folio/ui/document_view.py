@@ -315,6 +315,10 @@ class DocumentView(VerticalScroll):
         if directive.type == "file":
             return max(source_lines, self._preview_lines(directive) + 4)
 
+        if directive.type == "contact":
+            limit = self._limit_lines(directive, default=6)
+            return max(source_lines, 4 + (limit * 5))
+
         if directive.type == "note":
             return max(source_lines, max(4, len(directive.body) + 4))
 
@@ -331,13 +335,18 @@ class DocumentView(VerticalScroll):
         return 2
 
     def _preview_lines(self, directive: Directive) -> int:
+        return self._limit_lines(directive, default=20, param_name="lines")
+
+    def _limit_lines(self, directive: Directive, default: int, param_name: str = "limit") -> int:
         raw_lines = directive.params.get("lines")
+        if param_name != "lines":
+            raw_lines = directive.params.get(param_name)
         if raw_lines is None:
-            return 20
+            return default
         try:
             return max(1, int(raw_lines.strip('"')))
         except ValueError:
-            return 20
+            return default
 
     def _spacer(self, height: int) -> Static:
         spacer = Static("", classes="viewport-spacer")

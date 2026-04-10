@@ -47,6 +47,10 @@ class RendererFileAccess:
         resolved = self._guard(path)
         return sorted(resolved.iterdir(), key=lambda entry: (entry.is_file(), entry.name.lower()))
 
+    def write_text(self, path: Path, text: str) -> None:
+        resolved = self._guard(path)
+        resolved.write_text(text, encoding="utf-8")
+
     def _guard(self, path: Path) -> Path:
         resolved = path.resolve()
         if not self._is_allowed(resolved):
@@ -121,6 +125,7 @@ class CapabilitySpec:
     source_text: bool = False
     directive_lookup: bool = False
     filesystem_read: bool = False
+    filesystem_write: bool = False
     trust_state: bool = False
 
 

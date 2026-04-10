@@ -20,7 +20,7 @@ This implementation is a minimal Textual-based scaffold designed to validate the
 - `CapabilityRegistry`: Maps directive types to their respective renderers and manages manifests.
 - `MutationEngine`: Applies surgical text mutations to the source file and triggers reparsing.
 - `Textual UI`: A dual-pane console interface providing a raw source view and a rich rendered view.
-- **Built-in Renderers:** Initial implementations for `task`, `py` (sandboxed Python execution), `sh` (privileged runbook commands), `table` (grid editing), `note`, `file`, and `web` (text-only reader).
+- **Built-in Renderers:** Initial implementations for `task`, `py` (sandboxed Python execution), `sh` (privileged runbook commands), `table` (grid editing), `note`, `file`, `contact` (local vCard reader), and `web` (text-only reader).
 
 ## Installation
 
@@ -73,6 +73,19 @@ pytest
     - Click **Run** on a `::sh` block to execute a privileged shell command and persist its `::sh-output` block.
     - Click **Source / Widget** to toggle the rendered view for a specific directive.
     - Use arrow keys and `Enter` to edit `::table` cells directly in the grid.
+
+## Contacts
+
+`::contact` reads local contacts from standard vCard (`.vcf`) files or directories of `.vcf` files. Example:
+
+```text
+::contact[contacts/sara.vcf]
+::contact[contacts]{limit="10"}
+```
+
+The renderer is read-only in this prototype and uses the registry-provided filesystem capability rather than ambient path access.
+
+For a single-contact `.vcf` file, the widget also exposes editable fields and a `Save` action that rewrites the vCard text on disk through the declared filesystem-write capability. Directory and multi-contact views remain read-only for now.
 
 ## Shell Execution
 

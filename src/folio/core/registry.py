@@ -67,7 +67,7 @@ class CapabilityRegistry:
             py_results=base_ctx.py_results if caps.py_results else None,
             web_results=base_ctx.web_results if caps.web_results else None,
             document_path=base_ctx.document_path if caps.document_path else None,
-            file_access=RendererFileAccess(base_ctx.document_path) if caps.filesystem_read else None,
+            file_access=RendererFileAccess(base_ctx.document_path) if (caps.filesystem_read or caps.filesystem_write) else None,
             source_text=base_ctx.source_text if caps.source_text else None,
             directives_by_id=base_ctx.directives_by_id if caps.directive_lookup else None,
             directive_find=base_ctx.directive_find if caps.directive_lookup else None,
@@ -103,6 +103,7 @@ class CapabilityRegistry:
                 source_text=bool(capabilities.get("source_text", False)),
                 directive_lookup=bool(capabilities.get("directive_lookup", False)),
                 filesystem_read=bool(capabilities.get("filesystem_read", False)),
+                filesystem_write=bool(capabilities.get("filesystem_write", False)),
                 trust_state=bool(capabilities.get("trust_state", False)),
             ),
             sandbox=SandboxSpec(

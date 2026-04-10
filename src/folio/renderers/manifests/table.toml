@@ -1,0 +1,40 @@
+[renderer]
+directive_type = "table"
+display_name = "Table"
+description = "Structured table renderer with direct in-cell editing."
+version = "1.0.0"
+supports_inline_source = true
+supports_editing = true
+
+[[params]]
+name = "source"
+description = "Source ::py block key for structured rows."
+
+[[params]]
+name = "editable"
+default = "\"false\""
+description = "Whether the table can be edited."
+
+[[params]]
+name = "sortable"
+default = "\"false\""
+description = "Reserved flag for table sorting support."
+
+[[actions]]
+name = "table.edit"
+description = "Commit an edited table back to document text."
+
+[actions.payload_schema]
+directive = "Directive"
+rows = "list[dict[str, object]]"
+
+[capabilities]
+events = true
+py_results = true
+
+[sandbox]
+execution_mode = "in-process"
+network = false
+storage = false
+document_text = false
+notes = "Built-in widget renderer. Registry grants only table-related results and event emission."

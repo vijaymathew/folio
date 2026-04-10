@@ -264,12 +264,13 @@ class DocumentView(VerticalScroll):
 
             for directive in model.directive_index.directives_starting_at(line_no):
                 renderer = registry.create(directive.type)
+                renderer_ctx = registry.context_for(directive.type, ctx) if renderer is not None else ctx
                 blocks.append(
                     RenderBlock(
                         start_line=directive.start_line,
                         end_line=directive.end_line,
                         estimated_height=self._estimate_directive_height(directive, ctx),
-                        build_widget=self._widget_factory(directive, renderer, ctx),
+                        build_widget=self._widget_factory(directive, renderer, renderer_ctx, ctx),
                     )
                 )
 
@@ -340,18 +341,24 @@ class DocumentView(VerticalScroll):
         self,
         directive: Directive,
         renderer: object | None,
-        ctx: RenderContext,
+        renderer_ctx: RenderContext,
+        display_ctx: RenderContext,
     ) -> Callable[[], Widget]:
         source_text = self._directive_source_text(directive)
 
-        def build(directive: Directive = directive, renderer: object | None = renderer, ctx: RenderContext = ctx) -> Widget:
-            inner = renderer.render(directive, ctx) if renderer is not None else Static(directive.header_line, markup=False)
+        def build(
+            directive: Directive = directive,
+            renderer: object | None = renderer,
+            renderer_ctx: RenderContext = renderer_ctx,
+            display_ctx: RenderContext = display_ctx,
+        ) -> Widget:
+            inner = renderer.render(directive, renderer_ctx) if renderer is not None else Static(directive.header_line, markup=False)
             return DirectiveBlock(
                 directive=directive,
                 inner=inner,
                 source_text=source_text,
-                show_source=directive.key() in (ctx.directive_source_view or set()),
-                ctx=ctx,
+                show_source=directive.key() in (display_ctx.directive_source_view or set()),
+                ctx=display_ctx,
             )
 
         return build

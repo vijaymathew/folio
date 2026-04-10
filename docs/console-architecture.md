@@ -365,6 +365,9 @@ Status key:
 
 - `done` maps directive types to renderer implementations
 - `done` exposes renderer manifests / capability declarations
+- `done` loads manifests from checked-in TOML files rather than Python-only metadata
+- `done` exposes original manifest source for inspection
+- `done` filters renderer context by declared capabilities before calling `render(...)`
 - `done` allows partial rendering when a directive type is unsupported
   Unknown directives fall back to raw header text.
 

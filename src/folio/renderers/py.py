@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from rich.text import Text
 from textual.containers import Vertical
 from textual.widgets import Button, Static
 
 from folio.core.models import Directive
-from folio.renderers.base import ActionSpec, ParamSpec, RenderContext, RendererManifest, widget_id_fragment
+from folio.renderers.base import RenderContext, widget_id_fragment
 
 
 class PyBlockWidget(Vertical):
@@ -41,23 +43,7 @@ class PyBlockWidget(Vertical):
 
 
 class PyRenderer:
-    manifest = RendererManifest(
-        directive_type="py",
-        display_name="Python Block",
-        description="Document-scoped Python evaluation block.",
-        params=[
-            ParamSpec("run", default='"manual"', description='Execution mode: "auto" or "manual".'),
-        ],
-        actions=[
-            ActionSpec(
-                "py.run",
-                "Run this Python block and all preceding blocks in document order.",
-                {"directive": "Directive"},
-            )
-        ],
-        supports_inline_source=True,
-        supports_editing=False,
-    )
+    manifest_path = Path(__file__).with_name("manifests") / "py.toml"
 
     def render(self, directive: Directive, ctx: RenderContext) -> Static:
         code = "\n".join(directive.body) if directive.body else directive.header_line

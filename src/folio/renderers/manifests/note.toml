@@ -1,0 +1,27 @@
+[renderer]
+directive_type = "note"
+display_name = "Note"
+description = "Inline transclusion renderer for local note sections."
+version = "1.0.0"
+supports_inline_source = true
+supports_editing = false
+
+[[params]]
+name = "path"
+description = "Optional explicit path to the source note."
+
+[[params]]
+name = "section"
+default = "\"full\""
+description = "Heading section to extract."
+
+[capabilities]
+document_path = true
+filesystem_read = true
+
+[sandbox]
+execution_mode = "in-process"
+network = false
+storage = true
+document_text = false
+notes = "Renderer reads local files only through the registry-provided file access service."

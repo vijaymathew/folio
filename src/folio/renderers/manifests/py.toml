@@ -1,0 +1,30 @@
+[renderer]
+directive_type = "py"
+display_name = "Python Block"
+description = "Document-scoped Python evaluation block."
+version = "1.0.0"
+supports_inline_source = true
+supports_editing = false
+
+[[params]]
+name = "run"
+default = "\"manual\""
+description = "Execution mode: \"auto\" or \"manual\"."
+
+[[actions]]
+name = "py.run"
+description = "Run this Python block and all preceding blocks in document order."
+
+[actions.payload_schema]
+directive = "Directive"
+
+[capabilities]
+events = true
+py_results = true
+
+[sandbox]
+execution_mode = "subprocess"
+network = false
+storage = false
+document_text = false
+notes = "Execution is delegated to the hardened Python worker. Renderer only reads worker results."

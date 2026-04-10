@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from copy import deepcopy
+from pathlib import Path
 from typing import Any
 
 from textual import events
@@ -11,7 +12,7 @@ from textual.coordinate import Coordinate
 from textual.widgets import DataTable, Static
 
 from folio.core.models import Directive
-from folio.renderers.base import ActionSpec, ParamSpec, RenderContext, RendererManifest, widget_id_fragment
+from folio.renderers.base import RenderContext, widget_id_fragment
 
 
 def _coerce_value(raw: str) -> object:
@@ -223,28 +224,7 @@ class TableEditor(Vertical):
 
 
 class TableRenderer:
-    manifest = RendererManifest(
-        directive_type="table",
-        display_name="Table",
-        description="Structured table renderer with direct in-cell editing.",
-        params=[
-            ParamSpec("source", description="Source ::py block key for structured rows."),
-            ParamSpec("editable", default='"false"', description="Whether the table can be edited."),
-            ParamSpec("sortable", default='"false"', description="Reserved flag for table sorting support."),
-        ],
-        actions=[
-            ActionSpec(
-                "table.edit",
-                "Commit an edited table back to document text.",
-                {
-                    "directive": "Directive",
-                    "rows": "list[dict[str, object]]",
-                },
-            )
-        ],
-        supports_inline_source=True,
-        supports_editing=True,
-    )
+    manifest_path = Path(__file__).with_name("manifests") / "table.toml"
 
     def render(self, directive: Directive, ctx: RenderContext) -> Static:
         rows = self._rows_from_directive(directive)

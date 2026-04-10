@@ -1,0 +1,32 @@
+[renderer]
+directive_type = "file"
+display_name = "File"
+description = "Local file preview and directory listing renderer."
+version = "1.0.0"
+supports_inline_source = true
+supports_editing = false
+
+[[params]]
+name = "path"
+description = "Optional explicit path when the directive id is not the path."
+
+[[params]]
+name = "preview"
+default = "\"auto\""
+description = "Preview mode, currently \"auto\" or \"text\"."
+
+[[params]]
+name = "lines"
+default = "20"
+description = "Maximum number of preview lines or directory entries."
+
+[capabilities]
+document_path = true
+filesystem_read = true
+
+[sandbox]
+execution_mode = "in-process"
+network = false
+storage = true
+document_text = false
+notes = "Renderer reads local files only through the registry-provided file access service."

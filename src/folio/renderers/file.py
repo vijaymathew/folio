@@ -8,7 +8,7 @@ from textual.containers import Vertical
 from textual.widgets import Static
 
 from folio.core.models import Directive
-from folio.renderers.base import ParamSpec, RenderContext, RendererManifest
+from folio.renderers.base import RenderContext, RendererFileAccess
 
 
 def _parse_int(raw: str | None, default: int) -> int:
@@ -21,12 +21,13 @@ def _parse_int(raw: str | None, default: int) -> int:
 
 
 class FileWidget(Vertical):
-    def __init__(self, directive: Directive, resolved_path: Path, preview: str, lines: int) -> None:
+    def __init__(self, directive: Directive, resolved_path: Path, preview: str, lines: int, file_access: RendererFileAccess) -> None:
         super().__init__(classes="file-widget")
         self.directive = directive
         self.resolved_path = resolved_path
         self.preview = preview
         self.lines = lines
+        self.file_access = file_access
         self.border_title = Text(directive.title())
 
     def compose(self) -> ComposeResult:
@@ -42,7 +43,7 @@ class FileWidget(Vertical):
             return f"Path not found: {self.resolved_path}"
 
         if self.resolved_path.is_dir():
-            entries = sorted(self.resolved_path.iterdir(), key=lambda entry: (entry.is_file(), entry.name.lower()))
+            entries = self.file_access.list_dir(self.resolved_path)
             if not entries:
                 return "(empty directory)"
             lines = []
@@ -56,7 +57,7 @@ class FileWidget(Vertical):
         if self.preview not in {"auto", "text"}:
             return f"Preview mode '{self.preview}' is not implemented."
 
-        data = self.resolved_path.read_bytes()
+        data = self.file_access.read_bytes(self.resolved_path)
         if b"\0" in data:
             return f"Binary file ({len(data)} bytes)"
 
@@ -71,47 +72,22 @@ class FileWidget(Vertical):
 
 
 class FileRenderer:
-    manifest = RendererManifest(
-        directive_type="file",
-        display_name="File",
-        description="Local file preview and directory listing renderer.",
-        params=[
-            ParamSpec("path", description="Optional explicit path when the directive id is not the path."),
-            ParamSpec("preview", default='"auto"', description='Preview mode, currently "auto" or "text".'),
-            ParamSpec("lines", default="20", description="Maximum number of preview lines or directory entries."),
-        ],
-        supports_inline_source=True,
-        supports_editing=False,
-    )
+    manifest_path = Path(__file__).with_name("manifests") / "file.toml"
 
     def render(self, directive: Directive, ctx: RenderContext) -> Static:
+        if ctx.file_access is None:
+            return Static("Renderer capability denied: filesystem_read.", classes="file-widget")
         raw_path = directive.id or directive.params.get("path", '"unknown"').strip('"')
         preview = directive.params.get("preview", '"auto"').strip('"')
         lines = _parse_int(directive.params.get("lines"), 20)
-        resolved = self._resolve_path(raw_path, ctx)
+        try:
+            resolved = self._resolve_path(raw_path, ctx)
+        except PermissionError as exc:
+            return Static(str(exc), classes="file-widget")
 
-        return FileWidget(directive, resolved, preview, lines)
+        assert ctx.file_access is not None
+        return FileWidget(directive, resolved, preview, lines, ctx.file_access)
 
     def _resolve_path(self, raw_path: str, ctx: RenderContext) -> Path:
-        candidate = Path(raw_path).expanduser()
-        if candidate.is_absolute():
-            return candidate
-
-        search_roots: list[Path] = []
-        if ctx.document_path is not None:
-            base_dir = ctx.document_path.parent.resolve()
-            search_roots.append(base_dir)
-            search_roots.extend(base_dir.parents)
-        search_roots.append(Path.cwd())
-
-        seen: set[Path] = set()
-        for root in search_roots:
-            if root in seen:
-                continue
-            seen.add(root)
-            resolved = (root / candidate).resolve()
-            if resolved.exists():
-                return resolved
-
-        first_root = search_roots[0] if search_roots else Path.cwd()
-        return (first_root / candidate).resolve()
+        assert ctx.file_access is not None
+        return ctx.file_access.resolve_document_relative(raw_path)

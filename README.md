@@ -53,6 +53,18 @@ Only document-owned state is in scope for this scaffold:
 
 Remote backends are intentionally excluded from this first cut.
 
+## Renderer Manifests
+
+Built-in renderers now register through checked-in TOML manifests under [src/folio/renderers/manifests](/home/vijay/Projects/folio/src/folio/renderers/manifests).
+
+The capability registry uses those manifests to:
+
+- discover renderer params and actions
+- expose manifest source for inspection
+- filter runtime renderer context by declared capabilities
+
+This gives Folio an explicit manifest/runtime boundary for built-in renderers. It is still lighter-weight than full per-renderer process isolation; only `::py` currently runs in a hardened subprocess sandbox.
+
 ## Python Execution
 
 `::py` blocks now execute in a subprocess-backed worker:

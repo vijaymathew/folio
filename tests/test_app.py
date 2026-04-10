@@ -8,7 +8,7 @@ from pathlib import Path
 
 from folio.core.models import ShRunResult, WebLink, WebPageResult
 from folio.renderers.contact import ContactWidget
-from folio.renderers.email import EmailWidget
+from folio.renderers.email import EmailComposeWidget, EmailWidget
 from folio.renderers.base import widget_id_fragment
 from folio.renderers.table import TableEditor
 from folio.ui.document_view import DocumentView
@@ -482,6 +482,42 @@ def test_email_widget_reads_maildir_and_runs_actions(tmp_path: Path) -> None:
             assert widget.selected.subject != first_subject
 
     asyncio.run(scenario())
+
+
+def test_email_draft_saves_draft_and_updates_document(tmp_path: Path) -> None:
+    maildir_path = tmp_path / "mail"
+    _seed_maildir(maildir_path)
+    doc = tmp_path / "compose.folio"
+    doc.write_text(
+        "\n".join(
+            [
+                '::email[draft]{path="mail" drafts-folder="Drafts" from="vijay@example.com" to="team@example.com" cc="" subject="Weekly briefing"}',
+                "Please review the latest draft before noon.",
+                "::end",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    async def scenario() -> None:
+        app = FolioApp(doc)
+        async with app.run_test(size=(140, 45)) as pilot:
+            await pilot.pause(0.2)
+            widget = app.query_one(EmailComposeWidget)
+            app.query_one(f"#email-compose-subject-{widget.key_fragment}", Input).value = "Weekly briefing v2"
+            body = app.query_one(f"#email-compose-body-{widget.key_fragment}", TextArea)
+            body.load_text("Please review the updated draft.\nThanks.")
+            await pilot.pause(0.1)
+            app.query_one(f"#email-compose-save-{widget.key_fragment}", Button).press()
+            await pilot.pause(0.3)
+
+    asyncio.run(scenario())
+
+    updated = doc.read_text(encoding="utf-8")
+    assert 'draft-key="' in updated
+    assert 'subject="Weekly briefing v2"' in updated
+    assert "Please review the updated draft." in updated
 
 
 def test_sh_run_writes_output_block_and_rerun_replaces_it(tmp_path: Path) -> None:

@@ -9,10 +9,11 @@ def test_parser_builds_directive_index_for_example_document() -> None:
     text = Path("/home/vijay/Projects/folio/docs/example.folio").read_text()
     model = DirectiveParser().parse(text)
 
-    assert len(model.directives) == 9
+    assert len(model.directives) == 10
     assert model.directive_index.find("task", "call-finance") is not None
     assert model.directive_index.find("contact", "docs/sample/contacts") is not None
     assert model.directive_index.find("email", "docs/sample/email") is not None
+    assert model.directive_index.find("email", "draft") is not None
     assert model.directive_index.find("py", "q3-data") is not None
     assert [directive.key() for directive in model.directive_index.directives_of_type("py")] == [
         "q3-data",

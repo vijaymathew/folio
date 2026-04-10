@@ -11,7 +11,7 @@ from textual.widgets import Button, Footer, Header, Static, TextArea
 
 from folio.core.events import EventBus
 from folio.core.contact_reader import ContactCard, ContactReader, ContactReaderError
-from folio.core.email_store import EmailStoreError, MaildirEmailStore
+from folio.core.email_store import EmailDraft, EmailStoreError, MaildirEmailStore
 from folio.core.models import Directive, DocumentModel, TextMutation
 from folio.core.mutations import MutationEngine
 from folio.core.parser import DirectiveParser
@@ -189,6 +189,30 @@ class FolioApp(App[None]):
     .email-body, .email-empty {
       height: auto;
     }
+    .email-compose-widget {
+      height: auto;
+      border: round $surface-lighten-1;
+      padding: 1;
+      margin-bottom: 1;
+    }
+    .email-compose-meta, .email-compose-form, .email-compose-actions {
+      height: auto;
+      margin-bottom: 1;
+    }
+    .email-compose-meta {
+      color: $text-muted;
+    }
+    .email-compose-input {
+      width: 1fr;
+      margin-bottom: 1;
+    }
+    .email-compose-body {
+      height: 10;
+      margin-bottom: 1;
+    }
+    .email-compose-save {
+      width: 14;
+    }
     .note-widget {
       height: auto;
       border: round $surface-lighten-1;
@@ -351,6 +375,7 @@ class FolioApp(App[None]):
         self.events.subscribe("contact.save", self.save_contact)
         self.events.subscribe("email.select", self.select_email_message)
         self.events.subscribe("email.action", self.perform_email_action)
+        self.events.subscribe("email.compose_save", self.save_email_compose)
         self.events.subscribe("directive.toggle_view", self.toggle_directive_view)
         self.events.subscribe("directive.source_edit", self.update_directive_source_buffer)
         self.events.subscribe("web.reload", self.reload_web_directive)
@@ -795,6 +820,51 @@ class FolioApp(App[None]):
             return
 
         self.reload_render_pane()
+
+    def save_email_compose(self, directive: Directive, draft: EmailDraft) -> None:
+        base_ctx = self._build_render_context(self.model)
+        ctx = self.registry.context_for("email", base_ctx)
+        if ctx.file_access is None:
+            self.log_status(f"{directive.title()} draft save blocked: renderer file access unavailable.", error=True)
+            return
+
+        raw_path = directive.params.get("path", '""').strip('"')
+        drafts_folder = directive.params.get("drafts-folder", '"Drafts"').strip('"') or "Drafts"
+        existing_key = directive.params.get("draft-key", '""').strip('"') or None
+
+        try:
+            if not raw_path:
+                self.log_status(f"{directive.title()} draft save failed: missing Maildir path.", error=True)
+                return
+            path = ctx.file_access.resolve_document_relative(raw_path)
+            store = MaildirEmailStore(path)
+            new_key = store.save_draft(draft, drafts_folder=drafts_folder, existing_key=existing_key)
+        except (EmailStoreError, PermissionError, OSError) as exc:
+            self.log_status(f"{directive.title()} draft save failed: {exc}", error=True)
+            return
+
+        params = dict(directive.params)
+        params["path"] = f'"{raw_path}"'
+        params["drafts-folder"] = f'"{drafts_folder}"'
+        params["draft-key"] = f'"{new_key}"'
+        params["from"] = f'"{draft.from_addr}"'
+        params["to"] = f'"{draft.to}"'
+        if draft.cc:
+            params["cc"] = f'"{draft.cc}"'
+        else:
+            params.pop("cc", None)
+        params["subject"] = f'"{draft.subject}"'
+        header = self._directive_header(directive.type, directive.id, params)
+        body_lines = draft.body.splitlines() if draft.body else []
+        new_text = "\n".join([header, *body_lines, "::end"])
+        mutation = TextMutation(
+            kind="replace",
+            start_line=directive.start_line,
+            end_line=directive.end_line,
+            new_text=new_text,
+            source="email.compose_save",
+        )
+        self._apply_mutation(mutation, success_message=f"{directive.title()} saved draft to {drafts_folder}.")
 
     def _build_advisories(self, model: DocumentModel) -> list[AdvisorySpec]:
         advisories: list[AdvisorySpec] = []

@@ -4,7 +4,7 @@ import mailbox
 from email.message import EmailMessage
 from pathlib import Path
 
-from folio.core.email_store import MaildirEmailStore
+from folio.core.email_store import EmailDraft, MaildirEmailStore
 
 
 def _seed_maildir(path: Path) -> MaildirEmailStore:
@@ -54,3 +54,26 @@ def test_maildir_store_updates_flags_and_moves_messages(tmp_path: Path) -> None:
     archived = store.get_message("Archive", moved_key)
     assert archived is not None
     assert archived.subject == subject
+
+
+def test_maildir_store_parses_and_saves_drafts(tmp_path: Path) -> None:
+    store = _seed_maildir(tmp_path / "mail")
+    draft = MaildirEmailStore.parse_compose_body(
+        [
+            "from = vijay@example.com",
+            "to = team@example.com",
+            "cc = ops@example.com",
+            "subject = Weekly briefing",
+            "---",
+            "Please review the draft before noon.",
+        ]
+    )
+
+    assert draft.subject == "Weekly briefing"
+    key = store.save_draft(draft, drafts_folder="Drafts")
+    saved = store.get_message("Drafts", key)
+
+    assert saved is not None
+    assert saved.subject == "Weekly briefing"
+    assert saved.sender == "vijay@example.com"
+    assert "Please review" in saved.body

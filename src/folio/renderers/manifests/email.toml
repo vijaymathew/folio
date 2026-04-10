@@ -30,6 +30,31 @@ name = "trash-folder"
 default = "\"Trash\""
 description = "Target Maildir folder for Trash."
 
+[[params]]
+name = "drafts-folder"
+default = "\"Drafts\""
+description = "Target Maildir folder for saving ::email[draft] messages."
+
+[[params]]
+name = "draft-key"
+description = "Internal key of the saved draft in Maildir."
+
+[[params]]
+name = "from"
+description = "Draft sender address for ::email[draft]."
+
+[[params]]
+name = "to"
+description = "Draft recipient list for ::email[draft]."
+
+[[params]]
+name = "cc"
+description = "Draft CC list for ::email[draft]."
+
+[[params]]
+name = "subject"
+description = "Draft subject for ::email[draft]."
+
 [[actions]]
 name = "email.select"
 description = "Select a message for reading in the widget."
@@ -46,6 +71,14 @@ description = "Run a mailbox action such as read, star, trash, or archive."
 directive = "Directive"
 message_key = "str"
 action = "str"
+
+[[actions]]
+name = "email.compose_save"
+description = "Persist a ::email[draft] message to the document and target Maildir Drafts folder."
+
+[actions.payload_schema]
+directive = "Directive"
+draft = "EmailDraft"
 
 [capabilities]
 events = true

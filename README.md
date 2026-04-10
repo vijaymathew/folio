@@ -105,6 +105,22 @@ The widget renders a text-native message list plus the selected message body and
 
 `Inbox` maps to the root Maildir. Other folders map to Maildir folders such as `Archive` or `Lists.Project`.
 
+## Email Drafts
+
+Draft composition uses `::email[draft]`. It stores editable compose fields in the directive params, keeps the body as plain text between the tags, and writes a draft message into a Maildir `Drafts` folder when you press `Save Draft`.
+
+```text
+::email[draft]{path="mail" drafts-folder="Drafts" from="vijay@example.com" to="team@example.com" cc="ops@example.com" subject="Weekly briefing"}
+Please review the latest draft before noon.
+::end
+```
+
+On save, Folio:
+
+- rewrites the directive body in normalized compose form
+- saves the message into the target Maildir drafts folder
+- records the saved Maildir key in `draft-key="..."`
+
 ## Shell Execution
 
 `::sh` follows the manuscript's runbook model:

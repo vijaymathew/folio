@@ -14,6 +14,15 @@ The contact and email widgets below use local sample data so the renderer can sh
 
 ::email[docs/sample/email]{folder="Inbox" limit="5" archive-folder="Archive" trash-folder="Trash"}
 
+::email[draft]{path="docs/sample/email" drafts-folder="Drafts" from="vijay@example.com" to="sara@example.com" cc="maya@example.com" subject="Weekly briefing draft" draft-key="1775819176.M563152P164603Q1.vijay-LPMH510-N"}
+Hi Sara,
+
+Please review the draft briefing before noon.
+
+Thanks,
+Vijay
+::end
+
 The table and Python blocks below are placeholders in this scaffold, but they define the structure the console renderer needs to understand.
 
 ::py[q3-data]{run="auto"}

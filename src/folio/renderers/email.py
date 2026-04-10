@@ -5,9 +5,9 @@ from pathlib import Path
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Button, Static
+from textual.widgets import Button, Input, Static, TextArea
 
-from folio.core.email_store import EmailMessageView, EmailStoreError, EmailSummary, MaildirEmailStore
+from folio.core.email_store import EmailDraft, EmailMessageView, EmailStoreError, EmailSummary, MaildirEmailStore
 from folio.core.models import Directive
 from folio.renderers.base import RenderContext, widget_id_fragment
 
@@ -144,10 +144,75 @@ class EmailWidget(Vertical):
         return "Unstar" if "F" in self.selected.flags else "Star"
 
 
+class EmailComposeWidget(Vertical):
+    def __init__(self, directive: Directive, ctx: RenderContext, draft: EmailDraft) -> None:
+        super().__init__(classes="email-compose-widget")
+        self.directive = directive
+        self.ctx = ctx
+        self.draft = draft
+        self.key_fragment = widget_id_fragment(directive.key())
+        self.border_title = Text(directive.title())
+
+    def compose(self) -> ComposeResult:
+        yield Static(self._meta_text(), classes="email-compose-meta", markup=False)
+        with Vertical(classes="email-compose-form"):
+            yield self._field("From", "from", self.draft.from_addr)
+            yield self._field("To", "to", self.draft.to)
+            yield self._field("Cc", "cc", self.draft.cc)
+            yield self._field("Subject", "subject", self.draft.subject)
+            editor = TextArea(
+                self.draft.body,
+                id=f"email-compose-body-{self.key_fragment}",
+                classes="email-compose-body",
+                language="markdown",
+                soft_wrap=True,
+                show_line_numbers=False,
+            )
+            editor.border_title = "Body"
+            yield editor
+            with Horizontal(classes="email-compose-actions"):
+                yield Button("Save Draft", id=f"email-compose-save-{self.key_fragment}", compact=True, classes="email-compose-save")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id != f"email-compose-save-{self.key_fragment}" or self.ctx.events is None:
+            return
+        draft = EmailDraft(
+            from_addr=self.query_one(f"#email-compose-from-{self.key_fragment}", Input).value.strip(),
+            to=self.query_one(f"#email-compose-to-{self.key_fragment}", Input).value.strip(),
+            cc=self.query_one(f"#email-compose-cc-{self.key_fragment}", Input).value.strip(),
+            subject=self.query_one(f"#email-compose-subject-{self.key_fragment}", Input).value.strip(),
+            body=self.query_one(f"#email-compose-body-{self.key_fragment}", TextArea).text.rstrip(),
+        )
+        self.ctx.events.emit("email.compose_save", directive=self.directive, draft=draft)
+        event.stop()
+
+    def _field(self, label: str, name: str, value: str) -> Input:
+        field = Input(value, id=f"email-compose-{name}-{self.key_fragment}", classes="email-compose-input")
+        field.border_title = label
+        return field
+
+    def _meta_text(self) -> str:
+        drafts_folder = self.directive.params.get("drafts-folder", '"Drafts"').strip('"') or "Drafts"
+        path = self.directive.params.get("path", '""').strip('"') or "(missing path)"
+        draft_key = self.directive.params.get("draft-key", '""').strip('"')
+        suffix = f" | draft-key={draft_key}" if draft_key else ""
+        return f"Maildir: {path} | drafts={drafts_folder}{suffix}"
+
+
 class EmailRenderer:
     manifest_path = Path(__file__).with_name("manifests") / "email.toml"
 
     def render(self, directive: Directive, ctx: RenderContext) -> Static:
+        if directive.id == "draft":
+            draft = EmailDraft(
+                from_addr=directive.params.get("from", '""').strip('"'),
+                to=directive.params.get("to", '""').strip('"'),
+                cc=directive.params.get("cc", '""').strip('"'),
+                subject=directive.params.get("subject", '""').strip('"'),
+                body="\n".join(directive.body).strip(),
+            )
+            return EmailComposeWidget(directive, ctx, draft)
+
         if ctx.file_access is None:
             return Static("Renderer capability denied: filesystem_read.", classes="email-widget")
 

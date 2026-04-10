@@ -3,6 +3,7 @@ from __future__ import annotations
 import mailbox
 import re
 from dataclasses import dataclass, field
+from email.message import EmailMessage
 from email.header import decode_header, make_header
 from email.parser import BytesParser
 from email.policy import default
@@ -36,12 +37,22 @@ class EmailMessageView:
     headers: dict[str, str] = field(default_factory=dict)
 
 
+@dataclass(slots=True)
+class EmailDraft:
+    from_addr: str
+    to: str
+    cc: str
+    subject: str
+    body: str
+
+
 class EmailStoreError(RuntimeError):
     pass
 
 
 class MaildirEmailStore:
     INBOX = "Inbox"
+    BODY_SEPARATOR = "---"
 
     def __init__(self, root: Path) -> None:
         self.root = root.resolve()
@@ -135,6 +146,56 @@ class MaildirEmailStore:
         target_box.flush()
         return str(new_key)
 
+    def save_draft(self, draft: EmailDraft, drafts_folder: str = "Drafts", existing_key: str | None = None) -> str:
+        box = self._mailbox_for_folder(drafts_folder, create=True)
+        if existing_key is not None and existing_key in box:
+            box.remove(existing_key)
+        message = self._build_draft_message(draft)
+        maildir_message = mailbox.MaildirMessage(message)
+        maildir_message.set_subdir("cur")
+        maildir_message.set_flags("D")
+        key = box.add(maildir_message)
+        box.flush()
+        return str(key)
+
+    @staticmethod
+    def parse_compose_body(lines: list[str]) -> EmailDraft:
+        headers: dict[str, str] = {}
+        body_lines: list[str] = []
+        in_body = False
+        for raw_line in lines:
+            line = raw_line.rstrip("\n")
+            if not in_body and line.strip() == MaildirEmailStore.BODY_SEPARATOR:
+                in_body = True
+                continue
+            if in_body:
+                body_lines.append(line)
+                continue
+            if "=" not in line:
+                continue
+            raw_key, raw_value = line.split("=", 1)
+            headers[raw_key.strip().lower()] = raw_value.strip()
+        return EmailDraft(
+            from_addr=headers.get("from", ""),
+            to=headers.get("to", ""),
+            cc=headers.get("cc", ""),
+            subject=headers.get("subject", ""),
+            body="\n".join(body_lines).strip(),
+        )
+
+    @staticmethod
+    def serialize_compose_body(draft: EmailDraft) -> list[str]:
+        lines = [
+            f"from = {draft.from_addr}",
+            f"to = {draft.to}",
+            f"cc = {draft.cc}",
+            f"subject = {draft.subject}",
+            MaildirEmailStore.BODY_SEPARATOR,
+        ]
+        if draft.body:
+            lines.extend(draft.body.splitlines())
+        return lines
+
     def _mailbox_for_folder(self, folder: str, *, create: bool = False):
         normalized = folder.strip() if folder else self.INBOX
         if normalized in {"", self.INBOX}:
@@ -146,6 +207,19 @@ class MaildirEmailStore:
         if create:
             return root_box.add_folder(normalized)
         raise EmailStoreError(f"Maildir folder not found: {normalized}")
+
+    def _build_draft_message(self, draft: EmailDraft) -> EmailMessage:
+        message = EmailMessage()
+        if draft.from_addr:
+            message["From"] = draft.from_addr
+        if draft.to:
+            message["To"] = draft.to
+        if draft.cc:
+            message["Cc"] = draft.cc
+        if draft.subject:
+            message["Subject"] = draft.subject
+        message.set_content(draft.body or "")
+        return message
 
     def _ensure_maildir(self) -> None:
         required = [self.root / "cur", self.root / "new", self.root / "tmp"]

@@ -29,4 +29,4 @@ table(rows)
 
 ::note[design-principles]{section="colours"}
 
-::file[docs/example.folio]{preview="text"}
+::file[docs/console-architecture.md]{preview="text"}

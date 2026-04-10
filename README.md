@@ -134,6 +134,5 @@ On save, Folio:
 
 ## Project Documentation
 
-- [Console Architecture Detail](docs/console-architecture.md)
 - [Renderer & Registry Authoring](docs/renderer-interface.md)
 - [Example .folio File](docs/example.folio)

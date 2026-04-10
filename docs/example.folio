@@ -44,4 +44,4 @@ table(rows)
 
 ::note[design-principles]{section="colours"}
 
-::file[docs/console-architecture.md]{preview="text"}
+::file[docs/renderer-interface.md]{preview="text"}

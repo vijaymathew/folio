@@ -197,7 +197,7 @@ def test_file_directive_toggle_uses_safe_widget_ids(tmp_path: Path) -> None:
     source = Path("/home/vijay/Projects/folio/docs/example.folio")
     doc = tmp_path / "example.folio"
     shutil.copyfile(source, doc)
-    key_fragment = widget_id_fragment("docs/console-architecture.md")
+    key_fragment = widget_id_fragment("docs/renderer-interface.md")
 
     async def scenario() -> None:
         app = FolioApp(doc)

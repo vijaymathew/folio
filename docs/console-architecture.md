@@ -345,17 +345,15 @@ Status key:
 #### DocumentStore
 
 - `done` loads and saves the text file
-- `partial` tracks current loaded/saved file state in memory
-  It caches current text, but does not yet surface explicit external-change detection on save.
-- `not started` exposes line/range replacement operations directly
-  Range replacement currently lives in `MutationEngine`.
+- `done` tracks current loaded/saved file state in memory
+- `done` exposes line/range replacement operations directly
 
 #### Version History
 
 - `done` version management is treated as an external concern
   Folio relies on the document file as the source of truth and expects tools such as `git` to provide history, diffs, rollback, and branching.
-- `partial` overwrite safety remains an internal concern
-  `DocumentStore` should still detect when the on-disk file changed since load before saving over it.
+- `done` overwrite safety remains an internal concern
+  `DocumentStore` detects when the on-disk file changed since load before saving over it.
 
 #### DirectiveParser
 
@@ -375,7 +373,7 @@ Status key:
 - `done` converts widget actions into text mutations
 - `done` supports append / replace / delete
 - `partial` applies mutation, then triggers reparse / rerender
-  The apply step is separate; the app coordinates reparse/rerender around it.
+  The apply step is centralized, but the app still owns the parse/render refresh cycle after the mutation commits.
 
 #### EventBus
 
@@ -424,7 +422,7 @@ Status key:
 - `done` build a mixed render tree
 - `done` render only the visible window plus a small margin
 - `partial` emit semantic event → convert to mutation → apply → reparse → rerender
-  The overall loop exists, but event routing is still somewhat direct and app-driven.
+  The mutation commit path is centralized now, but full reparse/rerender orchestration still lives in the app.
 
 ### First Interactive Features
 

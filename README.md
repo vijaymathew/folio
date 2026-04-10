@@ -98,6 +98,7 @@ The bottom status pane surfaces:
 - autorun completion
 - manual worker runs
 - safety policy failures
+- external-change save conflicts
 - source buffer dirty/save state
 - task toggles
 - table-edit mutations

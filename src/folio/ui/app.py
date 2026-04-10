@@ -12,7 +12,7 @@ from folio.core.models import Directive, DocumentModel, TextMutation
 from folio.core.mutations import MutationEngine
 from folio.core.parser import DirectiveParser
 from folio.core.registry import CapabilityRegistry
-from folio.core.store import DocumentStore
+from folio.core.store import DocumentConflictError, DocumentStore
 from folio.python.worker import PyWorker
 from folio.renderers.base import RenderContext
 from folio.renderers.file import FileRenderer
@@ -202,11 +202,7 @@ class FolioApp(App[None]):
 
     def action_save_source(self) -> None:
         editor = self.query_one("#source-editor", TextArea)
-        self.store.save(editor.text)
-        self._source_dirty = False
-        self._set_source_title()
-        self.log_status(f"Saved source document to {self.document_path}.")
-        self.reload_document()
+        self._save_source_text(editor.text)
 
     def reload_document(self) -> None:
         text = self.store.load()
@@ -298,17 +294,20 @@ class FolioApp(App[None]):
             new_text=header,
             source="task.toggle",
         )
-        self.mutations.apply(mutation)
-        self.log_status(f"{directive.title()} toggled -> done={directive.params['done']}.")
-        self.reload_document()
+        if self._apply_mutation(mutation, success_message=f"{directive.title()} toggled -> done={directive.params['done']}."):
+            return
 
     def update_table_directive(self, directive: Directive, rows: list[dict[str, object]]) -> None:
         params = dict(directive.params)
         params.pop("source", None)
         params["editable"] = '"true"'
-        self._replace_table_directive(directive, rows, params=params, source="table.edit")
-        self.log_status(f"{directive.title()} updated from widget edit; source rows materialized into document.")
-        self.reload_document()
+        self._replace_table_directive(
+            directive,
+            rows,
+            params=params,
+            source="table.edit",
+            success_message=f"{directive.title()} updated from widget edit; source rows materialized into document.",
+        )
 
     def _replace_table_directive(
         self,
@@ -317,6 +316,7 @@ class FolioApp(App[None]):
         *,
         params: dict[str, str],
         source: str,
+        success_message: str | None = None,
     ) -> None:
         header = self._directive_header(directive.type, directive.id, params)
         body = [json.dumps(row, ensure_ascii=True) for row in rows]
@@ -328,7 +328,7 @@ class FolioApp(App[None]):
             new_text=new_text,
             source=source,
         )
-        self.mutations.apply(mutation)
+        self._apply_mutation(mutation, success_message=success_message)
 
     def _directive_header(self, directive_type: str, directive_id: str | None, params: dict[str, str]) -> str:
         ident = f"[{directive_id}]" if directive_id else ""
@@ -357,3 +357,29 @@ class FolioApp(App[None]):
                 self.log_status(f"Autorun ::py[{key}] completed.")
             elif result.status == "error":
                 self.log_status(f"Autorun ::py[{key}] failed: {result.error}", error=True)
+
+    def _save_source_text(self, text: str) -> bool:
+        try:
+            self.store.save(text)
+        except DocumentConflictError as exc:
+            self.log_status(str(exc), error=True)
+            return False
+
+        self._source_dirty = False
+        self._set_source_title()
+        self.log_status(f"Saved source document to {self.document_path}.")
+        self.reload_document()
+        return True
+
+    def _apply_mutation(self, mutation: TextMutation, *, success_message: str | None = None) -> bool:
+        try:
+            self.mutations.apply(mutation)
+        except DocumentConflictError as exc:
+            self.log_status(str(exc), error=True)
+            self.reload_document()
+            return False
+
+        if success_message:
+            self.log_status(success_message)
+        self.reload_document()
+        return True

@@ -4,10 +4,11 @@ import asyncio
 import shutil
 from pathlib import Path
 
+from folio.renderers.base import widget_id_fragment
 from folio.renderers.table import TableEditor
 from folio.ui.document_view import DocumentView
 from folio.ui.app import FolioApp
-from textual.widgets import Button, DataTable
+from textual.widgets import Button, DataTable, TextArea
 
 
 def test_task_checkbox_click_rewrites_source(tmp_path: Path) -> None:
@@ -104,5 +105,121 @@ def test_render_pane_only_mounts_visible_window(tmp_path: Path) -> None:
             assert len(scrolled_buttons) < 30
             assert list(app.query("#toggle-item-29"))
             assert not list(app.query("#toggle-item-0"))
+
+    asyncio.run(scenario())
+
+
+def test_directive_can_toggle_between_widget_and_source_view(tmp_path: Path) -> None:
+    source = Path("/home/vijay/Projects/folio/docs/example.folio")
+    doc = tmp_path / "example.folio"
+    shutil.copyfile(source, doc)
+
+    async def scenario() -> None:
+        app = FolioApp(doc)
+        async with app.run_test(size=(140, 45)) as pilot:
+            await pilot.pause(0.2)
+            assert list(app.query("#toggle-call-finance"))
+            await pilot.click("#toggle-view-call-finance")
+            await pilot.pause(0.2)
+            assert not list(app.query("#toggle-call-finance"))
+            assert app.query_one("#directive-source-call-finance", TextArea)
+
+    asyncio.run(scenario())
+
+
+def test_inline_directive_source_editor_updates_main_source_buffer(tmp_path: Path) -> None:
+    source = Path("/home/vijay/Projects/folio/docs/example.folio")
+    doc = tmp_path / "example.folio"
+    shutil.copyfile(source, doc)
+
+    async def scenario() -> None:
+        app = FolioApp(doc)
+        async with app.run_test(size=(140, 45)) as pilot:
+            await pilot.pause(0.2)
+            app.query_one("#toggle-view-call-finance", Button).press()
+            await pilot.pause(0.2)
+
+            inline_editor = app.query_one("#directive-source-call-finance", TextArea)
+            updated_text = inline_editor.text.replace('done="false"', 'done="true"', 1)
+            inline_editor.load_text(updated_text)
+            await pilot.pause(0.2)
+
+            source_editor = app.query_one("#source-editor", TextArea)
+            assert updated_text in source_editor.text
+            assert app._source_dirty is True
+
+    asyncio.run(scenario())
+
+
+def test_file_directive_toggle_uses_safe_widget_ids(tmp_path: Path) -> None:
+    source = Path("/home/vijay/Projects/folio/docs/example.folio")
+    doc = tmp_path / "example.folio"
+    shutil.copyfile(source, doc)
+    key_fragment = widget_id_fragment("docs/example.folio")
+
+    async def scenario() -> None:
+        app = FolioApp(doc)
+        async with app.run_test(size=(140, 45)) as pilot:
+            await pilot.pause(0.2)
+            render = app.query_one("#render-pane", DocumentView)
+            render.scroll_end(animate=False)
+            await pilot.pause(0.3)
+            assert list(app.query(f"#toggle-view-{key_fragment}"))
+            app.query_one(f"#toggle-view-{key_fragment}", Button).press()
+            await pilot.pause(0.2)
+            assert list(app.query(f"#directive-source-{key_fragment}"))
+
+    asyncio.run(scenario())
+
+
+def test_single_pane_mode_is_default_and_f6_switches_to_split_pane(tmp_path: Path) -> None:
+    source = Path("/home/vijay/Projects/folio/docs/example.folio")
+    doc = tmp_path / "example.folio"
+    shutil.copyfile(source, doc)
+
+    async def scenario() -> None:
+        app = FolioApp(doc)
+        async with app.run_test(size=(140, 45)) as pilot:
+            await pilot.pause(0.2)
+            source_pane = app.query_one("#source-pane")
+            assert app._single_pane_mode is True
+            assert source_pane.styles.display == "none"
+            assert app._render_title() == "Document (Single Pane)"
+            assert app.active_bindings["f6"].binding.description == "Split Pane"
+
+            await pilot.press("f6")
+            await pilot.pause(0.2)
+            assert app._single_pane_mode is False
+            assert source_pane.styles.display == "block"
+            assert app._render_title() == "Rendered"
+            assert app.active_bindings["f6"].binding.description == "Single Pane"
+
+    asyncio.run(scenario())
+
+
+def test_large_document_shows_inline_advisory(tmp_path: Path) -> None:
+    doc = tmp_path / "advisory.folio"
+    blocks = []
+    for index in range(16):
+        blocks.append(
+            "\n".join(
+                [
+                    f'::task[item-{index}]{{done="false" due="soon"}}',
+                    f"Task {index}",
+                    "::end",
+                    "",
+                ]
+            )
+        )
+    doc.write_text("\n".join(blocks), encoding="utf-8")
+
+    async def scenario() -> None:
+        app = FolioApp(doc)
+        async with app.run_test(size=(140, 45)) as pilot:
+            await pilot.pause(0.2)
+            assert list(app.query("#advisory-action-document-size-dismiss"))
+            await pilot.click("#advisory-action-document-size-dismiss")
+            await pilot.pause(0.2)
+            assert not list(app.query("#advisory-action-document-size-dismiss"))
 
     asyncio.run(scenario())

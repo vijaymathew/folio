@@ -4,13 +4,15 @@ from dataclasses import dataclass
 from typing import Callable
 
 from textual import events
+from textual.app import ComposeResult
+from textual.containers import Horizontal, Vertical
 from textual.containers import VerticalScroll
 from textual.widget import Widget
-from textual.widgets import Static
+from textual.widgets import Button, Static, TextArea
 
 from folio.core.models import Directive, DocumentModel, ProseBlock
 from folio.core.registry import CapabilityRegistry
-from folio.renderers.base import RenderContext
+from folio.renderers.base import AdvisoryAction, AdvisorySpec, RenderContext, widget_id_fragment
 
 
 @dataclass(slots=True)
@@ -21,8 +23,115 @@ class RenderBlock:
     build_widget: Callable[[], Widget]
 
 
+class AdvisoryWidget(Vertical):
+    def __init__(self, advisory: AdvisorySpec, ctx: RenderContext) -> None:
+        super().__init__(classes=f"advisory-widget advisory-{advisory.level}")
+        self.advisory = advisory
+        self.ctx = ctx
+
+    def compose(self) -> ComposeResult:
+        yield Static(self.advisory.title, classes="advisory-title", markup=False)
+        yield Static(self.advisory.message, classes="advisory-message", markup=False)
+        if self.advisory.actions:
+            with Horizontal(classes="advisory-actions"):
+                for action in self.advisory.actions:
+                    yield Button(
+                        action.label,
+                        id=f"advisory-action-{self.advisory.id}-{action.key}",
+                        compact=True,
+                    )
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        prefix = f"advisory-action-{self.advisory.id}-"
+        button_id = event.button.id or ""
+        if not button_id.startswith(prefix) or self.ctx.events is None:
+            return
+        key = button_id[len(prefix) :]
+        for action in self.advisory.actions:
+            if action.key == key:
+                payload = dict(action.payload)
+                payload["advisory_id"] = self.advisory.id
+                self.ctx.events.emit(action.event_name, **payload)
+                event.stop()
+                return
+
+
+class DirectiveBlock(Vertical):
+    def __init__(self, directive: Directive, inner: Widget, source_text: str, show_source: bool, ctx: RenderContext) -> None:
+        super().__init__(classes="directive-container")
+        self.directive = directive
+        self.inner = inner
+        self.source_text = source_text
+        self.show_source = show_source
+        self.ctx = ctx
+        self.key_fragment = widget_id_fragment(directive.key())
+
+    def compose(self) -> ComposeResult:
+        mode_label = "Widget" if self.show_source else "Source"
+        with Horizontal(classes="directive-toolbar"):
+            yield Static(self.directive.title(), classes="directive-title", markup=False)
+            yield Button(
+                mode_label,
+                id=f"toggle-view-{self.key_fragment}",
+                classes="directive-toggle",
+                compact=True,
+            )
+        if self.show_source:
+            yield DirectiveSourceEditor(
+                self.directive,
+                self.source_text,
+                self.key_fragment,
+                self.ctx,
+            )
+        else:
+            yield self.inner
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == f"toggle-view-{self.key_fragment}" and self.ctx.events is not None:
+            self.ctx.events.emit("directive.toggle_view", directive=self.directive)
+            event.stop()
+
+
+class DirectiveSourceEditor(TextArea):
+    def __init__(self, directive: Directive, source_text: str, key_fragment: str, ctx: RenderContext) -> None:
+        super().__init__(
+            source_text,
+            id=f"directive-source-{key_fragment}",
+            classes="directive-source",
+            language="markdown",
+            soft_wrap=False,
+            show_line_numbers=False,
+        )
+        self.directive = directive
+        self.ctx = ctx
+        self._last_synced_text = source_text
+        self._sync_height(source_text)
+
+    def on_mount(self) -> None:
+        self._sync_height(self.text)
+
+    def on_text_area_changed(self, event: TextArea.Changed) -> None:
+        if event.text_area is not self:
+            return
+        self._sync_height(self.text)
+        if self.ctx.events is None or self.text == self._last_synced_text:
+            return
+        previous_text = self._last_synced_text
+        self._last_synced_text = self.text
+        self.ctx.events.emit(
+            "directive.source_edit",
+            directive=self.directive,
+            previous_text=previous_text,
+            new_text=self.text,
+        )
+
+    def _sync_height(self, text: str) -> None:
+        line_count = max(3, len(text.splitlines()) + 2)
+        self.styles.height = line_count
+
+
 class DocumentView(VerticalScroll):
-    VIEWPORT_MARGIN = 8
+    VIEWPORT_MARGIN = 12
     TITLE_HEIGHT = 2
 
     def __init__(self, *children: Widget, **kwargs) -> None:
@@ -42,6 +151,8 @@ class DocumentView(VerticalScroll):
         title: str = "Rendered",
     ) -> None:
         self._title = title
+        source_text = ctx.source_text if ctx.source_text is not None else model.text
+        self._source_lines = source_text.splitlines()
         self._blocks = self._build_blocks(model, registry, ctx)
         self._schedule_render_visible_window(force=True)
 
@@ -125,6 +236,16 @@ class DocumentView(VerticalScroll):
         ctx: RenderContext,
     ) -> list[RenderBlock]:
         blocks: list[RenderBlock] = []
+        for advisory in ctx.advisories or []:
+            blocks.append(
+                RenderBlock(
+                    start_line=-1,
+                    end_line=-1,
+                    estimated_height=self._estimate_advisory_height(advisory),
+                    build_widget=lambda advisory=advisory, ctx=ctx: AdvisoryWidget(advisory, ctx),
+                )
+            )
+
         prose_index = 0
 
         for line_no, _line in enumerate(model.text.splitlines() or [""]):
@@ -158,10 +279,12 @@ class DocumentView(VerticalScroll):
         return max(1, len(block.lines))
 
     def _estimate_directive_height(self, directive: Directive, ctx: RenderContext) -> int:
-        source_lines = max(1, directive.end_line - directive.start_line + 1)
+        source_lines = max(1, len(self._directive_source_text(directive).splitlines()) or 1)
+        if directive.key() in (ctx.directive_source_view or set()):
+            return source_lines + 3
 
         if directive.type == "task":
-            return max(source_lines, 4 + max(0, len(directive.body) - 1))
+            return max(source_lines, 4 + max(0, len(directive.body) - 1)) + 1
 
         if directive.type == "py":
             code_lines = max(1, len(directive.body) or 1)
@@ -175,19 +298,19 @@ class DocumentView(VerticalScroll):
                     output_lines += 1
             else:
                 output_lines = max(1, len((result.error or "").splitlines()) or 1)
-            return code_lines + output_lines + (1 if run_mode == "manual" else 0) + 3
+            return code_lines + output_lines + (1 if run_mode == "manual" else 0) + 4
 
         if directive.type == "table":
             rows = self._table_row_count(directive, ctx)
-            return max(source_lines, rows + 4)
+            return max(source_lines, rows + 5)
 
         if directive.type == "file":
-            return max(source_lines, self._preview_lines(directive) + 3)
+            return max(source_lines, self._preview_lines(directive) + 4)
 
         if directive.type == "note":
-            return max(source_lines, max(4, len(directive.body) + 3))
+            return max(source_lines, max(4, len(directive.body) + 4))
 
-        return max(source_lines, 3)
+        return max(source_lines, 4)
 
     def _table_row_count(self, directive: Directive, ctx: RenderContext) -> int:
         if directive.body:
@@ -219,6 +342,26 @@ class DocumentView(VerticalScroll):
         renderer: object | None,
         ctx: RenderContext,
     ) -> Callable[[], Widget]:
-        if renderer is None:
-            return lambda header=directive.header_line: Static(header, markup=False)
-        return lambda directive=directive, renderer=renderer, ctx=ctx: renderer.render(directive, ctx)
+        source_text = self._directive_source_text(directive)
+
+        def build(directive: Directive = directive, renderer: object | None = renderer, ctx: RenderContext = ctx) -> Widget:
+            inner = renderer.render(directive, ctx) if renderer is not None else Static(directive.header_line, markup=False)
+            return DirectiveBlock(
+                directive=directive,
+                inner=inner,
+                source_text=source_text,
+                show_source=directive.key() in (ctx.directive_source_view or set()),
+                ctx=ctx,
+            )
+
+        return build
+
+    def _directive_source_text(self, directive: Directive) -> str:
+        lines = getattr(self, "_source_lines", None)
+        if lines is None:
+            return directive.header_line
+        return "\n".join(lines[directive.start_line : directive.end_line + 1])
+
+    def _estimate_advisory_height(self, advisory: AdvisorySpec) -> int:
+        action_rows = 1 if advisory.actions else 0
+        return max(3, len(advisory.message.splitlines()) + action_rows + 2)

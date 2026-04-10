@@ -35,9 +35,11 @@ pytest
 
 - `q`: quit
 - `r`: reload document from disk
+- `f6`: switch between the default single-pane view and split-pane view
 - edit the source pane directly, then press `Ctrl+S` to save, reparse, and rerender
 - click a task checkbox to write a text mutation back to the source file
 - click `Run` on a `::py` block to execute document-scoped Python in a subprocess worker
+- click `Source` / `Widget` above a directive to toggle its rendered view
 
 ## Scope
 
@@ -99,6 +101,7 @@ The bottom status pane surfaces:
 - manual worker runs
 - safety policy failures
 - external-change save conflicts
+- inline advisories
 - source buffer dirty/save state
 - task toggles
 - table-edit mutations

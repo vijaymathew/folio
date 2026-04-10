@@ -5,7 +5,7 @@ from textual.containers import Vertical
 from textual.widgets import Button, Static
 
 from folio.core.models import Directive
-from folio.renderers.base import ActionSpec, ParamSpec, RenderContext, RendererManifest
+from folio.renderers.base import ActionSpec, ParamSpec, RenderContext, RendererManifest, widget_id_fragment
 
 
 class PyBlockWidget(Vertical):
@@ -23,18 +23,19 @@ class PyBlockWidget(Vertical):
         self.ctx = ctx
         self.output = output
         self.key = key
+        self.key_fragment = widget_id_fragment(key)
         self.code = code
         self.run_mode = run_mode
         self.border_title = Text(f"{directive.title()} [{run_mode}]")
 
     def compose(self):
         if self.run_mode == "manual":
-            yield Button("Run", id=f"run-py-{self.key}", compact=True, classes="py-run")
+            yield Button("Run", id=f"run-py-{self.key_fragment}", compact=True, classes="py-run")
         yield Static(self.code, classes="py-code", markup=False)
         yield Static(self.output, classes="py-output", markup=False)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == f"run-py-{self.key}" and self.ctx.events is not None:
+        if event.button.id == f"run-py-{self.key_fragment}" and self.ctx.events is not None:
             self.ctx.events.emit("py.run", directive=self.directive)
             event.stop()
 

@@ -392,8 +392,8 @@ Status key:
 - `done` split source pane + rendered pane + bottom status pane
 - `done` editable source buffer
 - `done` mutation/status/error pane
-- `not started` per-directive source/widget toggle
-- `not started` single-pane alternative mode
+- `done` per-directive source/widget toggle
+- `done` single-pane alternative mode
 
 ### Python Execution
 
@@ -462,8 +462,7 @@ Status key:
 - `not started` tabbed views
 - `not started` dialogs
 - `done` editable tables
-- `partial` inline advisories
-  The layout can support them, but there is not yet a dedicated advisory/conflict system.
+- `done` inline advisories
 - `done` mutation logs / status pane
 
 ### Non-Goals For V1

@@ -6,7 +6,7 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Static
 
 from folio.core.models import Directive
-from folio.renderers.base import ActionSpec, ParamSpec, RenderContext, RendererManifest
+from folio.renderers.base import ActionSpec, ParamSpec, RenderContext, RendererManifest, widget_id_fragment
 
 
 def _bool_param(value: str | None) -> bool:
@@ -21,7 +21,7 @@ class TaskWidget(Vertical):
         self.done = _bool_param(directive.params.get("done"))
         self.title_text = directive.body[0] if directive.body else directive.id or "untitled task"
         self.notes = directive.body[1:]
-        self.button_id = f"toggle-{directive.key()}"
+        self.button_id = f"toggle-{widget_id_fragment(directive.key())}"
         self.border_title = Text(directive.title())
 
     def compose(self) -> ComposeResult:

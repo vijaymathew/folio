@@ -11,7 +11,7 @@ from textual.coordinate import Coordinate
 from textual.widgets import DataTable, Static
 
 from folio.core.models import Directive
-from folio.renderers.base import ActionSpec, ParamSpec, RenderContext, RendererManifest
+from folio.renderers.base import ActionSpec, ParamSpec, RenderContext, RendererManifest, widget_id_fragment
 
 
 def _coerce_value(raw: str) -> object:
@@ -41,10 +41,11 @@ class TableEditor(Vertical):
         self.editing_cell: tuple[int, int] | None = None
         self.edit_buffer = ""
         self.original_value = ""
+        self.key_fragment = widget_id_fragment(directive.key())
 
     def compose(self) -> ComposeResult:
         yield Static(self.directive.title(), classes="table-title")
-        yield DataTable(id=f"table-grid-{self.directive.key()}")
+        yield DataTable(id=f"table-grid-{self.key_fragment}")
         yield Static("Arrow keys move. Type to edit the highlighted cell. Enter saves. Esc cancels.", id="table-edit-status")
 
     def on_mount(self) -> None:

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 from textual.app import App, ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Footer, Header, Static, TextArea
 
@@ -14,7 +16,7 @@ from folio.core.parser import DirectiveParser
 from folio.core.registry import CapabilityRegistry
 from folio.core.store import DocumentConflictError, DocumentStore
 from folio.python.worker import PyWorker
-from folio.renderers.base import RenderContext
+from folio.renderers.base import AdvisoryAction, AdvisorySpec, RenderContext
 from folio.renderers.file import FileRenderer
 from folio.renderers.note import NoteRenderer
 from folio.renderers.py import PyRenderer
@@ -24,6 +26,8 @@ from folio.ui.document_view import DocumentView
 
 
 class FolioApp(App[None]):
+    LAYOUT_BINDING_ID = "toggle-layout-mode"
+
     CSS = """
     Screen {
       layout: vertical;
@@ -138,15 +142,60 @@ class FolioApp(App[None]):
     .note-content {
       height: auto;
     }
+    .directive-container {
+      height: auto;
+      margin-bottom: 1;
+    }
+    .directive-toolbar {
+      height: auto;
+      margin-bottom: 1;
+    }
+    .directive-title {
+      width: 1fr;
+      color: $text-muted;
+    }
+    .directive-toggle {
+      width: 12;
+    }
+    .directive-source {
+      height: auto;
+      border: round $surface-lighten-1;
+      padding: 1;
+    }
+    .advisory-widget {
+      height: auto;
+      border: round $surface-lighten-1;
+      padding: 1;
+      margin-bottom: 1;
+    }
+    .advisory-warning {
+      border: round $warning;
+    }
+    .advisory-error {
+      border: round $error;
+    }
+    .advisory-title {
+      text-style: bold;
+      height: auto;
+      margin-bottom: 1;
+    }
+    .advisory-message {
+      height: auto;
+    }
+    .advisory-actions {
+      height: auto;
+      margin-top: 1;
+    }
     Button {
       min-width: 10;
     }
     """
 
     BINDINGS = [
-        ("q", "quit", "Quit"),
-        ("r", "reload_document", "Reload"),
-        ("ctrl+s", "save_source", "Save"),
+        Binding("q", "quit", "Quit"),
+        Binding("r", "reload_document", "Reload"),
+        Binding("ctrl+s", "save_source", "Save"),
+        Binding("f6", "toggle_single_pane", "Split Pane", id=LAYOUT_BINDING_ID),
     ]
 
     def __init__(self, document_path: Path) -> None:
@@ -162,6 +211,10 @@ class FolioApp(App[None]):
         self.py_results = {}
         self._loading_source = False
         self._source_dirty = False
+        self._single_pane_mode = True
+        self._source_view_keys: set[str] = set()
+        self._dismissed_advisories: set[str] = set()
+        self._active_conflict_message: str | None = None
         self._subscribe_events()
         self._register_renderers()
 
@@ -176,6 +229,11 @@ class FolioApp(App[None]):
         self.events.subscribe("task.toggle", self.toggle_task)
         self.events.subscribe("py.run", self.run_py_block)
         self.events.subscribe("table.edit", self.update_table_directive)
+        self.events.subscribe("directive.toggle_view", self.toggle_directive_view)
+        self.events.subscribe("directive.source_edit", self.update_directive_source_buffer)
+        self.events.subscribe("ui.toggle_single_pane", self.toggle_single_pane)
+        self.events.subscribe("advisory.dismiss", self.dismiss_advisory)
+        self.events.subscribe("document.reload", self.handle_reload_request)
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -195,7 +253,9 @@ class FolioApp(App[None]):
 
     def on_mount(self) -> None:
         self._reset_status_pane()
+        self._refresh_layout_binding()
         self.reload_document()
+        self.refresh_bindings()
 
     def action_reload_document(self) -> None:
         self.reload_document()
@@ -204,36 +264,31 @@ class FolioApp(App[None]):
         editor = self.query_one("#source-editor", TextArea)
         self._save_source_text(editor.text)
 
+    def action_toggle_single_pane(self) -> None:
+        self.toggle_single_pane()
+
     def reload_document(self) -> None:
         text = self.store.load()
+        self._active_conflict_message = None
         model = self.parser.parse(text)
         self.model = model
         self.py_results = self._run_autorun_blocks()
 
         editor = self.query_one("#source-editor", TextArea)
-        self._loading_source = True
-        editor.load_text(text)
-        self._loading_source = False
+        self._set_source_editor_text(text)
         self._source_dirty = False
         self._set_source_title()
 
-        ctx = RenderContext(
-            events=self.events,
-            py_results=self.py_results,
-            document_path=self.document_path,
-            directives_by_id=model.directive_index.by_id,
-        )
+        self._apply_layout_mode()
+        ctx = self._build_render_context(model)
         render = self.query_one("#render-pane", DocumentView)
-        render.render_document(model, self.registry, ctx)
+        render.render_document(model, self.registry, ctx, title=self._render_title())
         self._log_autorun_results()
 
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
         if event.text_area.id != "source-editor" or self._loading_source:
             return
-        if not self._source_dirty:
-            self._source_dirty = True
-            self._set_source_title()
-            self.log_status("Source buffer modified. Press Ctrl+S to save and reparse.")
+        self._mark_source_dirty()
 
     def _find_directive(self, directive_type: str, target: str) -> Directive | None:
         return self.model.directive_index.find(directive_type, target)
@@ -268,15 +323,10 @@ class FolioApp(App[None]):
 
     def reload_render_pane(self) -> None:
         model = self.model
-
-        ctx = RenderContext(
-            events=self.events,
-            py_results=self.py_results,
-            document_path=self.document_path,
-            directives_by_id=model.directive_index.by_id,
-        )
+        self._apply_layout_mode()
+        ctx = self._build_render_context(model)
         render = self.query_one("#render-pane", DocumentView)
-        render.render_document(model, self.registry, ctx)
+        render.render_document(model, self.registry, ctx, title=self._render_title())
 
     def toggle_task(self, directive: Directive) -> None:
         done = directive.params.get("done", '"false"').strip('"').lower() == "true"
@@ -362,7 +412,9 @@ class FolioApp(App[None]):
         try:
             self.store.save(text)
         except DocumentConflictError as exc:
+            self._active_conflict_message = str(exc)
             self.log_status(str(exc), error=True)
+            self.reload_render_pane()
             return False
 
         self._source_dirty = False
@@ -375,6 +427,7 @@ class FolioApp(App[None]):
         try:
             self.mutations.apply(mutation)
         except DocumentConflictError as exc:
+            self._active_conflict_message = str(exc)
             self.log_status(str(exc), error=True)
             self.reload_document()
             return False
@@ -383,3 +436,159 @@ class FolioApp(App[None]):
             self.log_status(success_message)
         self.reload_document()
         return True
+
+    def toggle_directive_view(self, directive: Directive) -> None:
+        key = directive.key()
+        if key in self._source_view_keys:
+            self._source_view_keys.remove(key)
+            self.log_status(f"{directive.title()} switched to widget view.")
+        else:
+            self._source_view_keys.add(key)
+            self.log_status(f"{directive.title()} switched to source view.")
+        self.reload_render_pane()
+
+    def update_directive_source_buffer(self, directive: Directive, previous_text: str, new_text: str) -> None:
+        editor = self.query_one("#source-editor", TextArea)
+        updated_text = self._replace_directive_text(editor.text, directive, previous_text, new_text)
+        if updated_text is None:
+            self.log_status(
+                f"{directive.title()} source could not be synced into the main buffer. Save or reload before editing inline again.",
+                error=True,
+            )
+            return
+        if updated_text == editor.text:
+            return
+        self._set_source_editor_text(updated_text)
+        self._mark_source_dirty()
+
+    def toggle_single_pane(self) -> None:
+        self._single_pane_mode = not self._single_pane_mode
+        self._refresh_layout_binding()
+        state = "single-pane" if self._single_pane_mode else "split-pane"
+        self.log_status(f"Layout switched to {state} mode.")
+        self.reload_render_pane()
+
+    def dismiss_advisory(self, advisory_id: str) -> None:
+        self._dismissed_advisories.add(advisory_id)
+        self.reload_render_pane()
+
+    def handle_reload_request(self, advisory_id: str | None = None) -> None:
+        if advisory_id is not None:
+            self._dismissed_advisories.discard(advisory_id)
+        self.log_status(f"Reloaded {self.document_path} from disk.")
+        self.reload_document()
+
+    def _build_render_context(self, model: DocumentModel) -> RenderContext:
+        editor = self.query_one("#source-editor", TextArea)
+        return RenderContext(
+            events=self.events,
+            py_results=self.py_results,
+            document_path=self.document_path,
+            source_text=editor.text,
+            directives_by_id=model.directive_index.by_id,
+            directive_source_view=set(self._source_view_keys),
+            advisories=self._build_advisories(model),
+            single_pane_mode=self._single_pane_mode,
+        )
+
+    def _build_advisories(self, model: DocumentModel) -> list[AdvisorySpec]:
+        advisories: list[AdvisorySpec] = []
+        line_count = len(model.text.splitlines())
+
+        if line_count >= 40 and "document-size" not in self._dismissed_advisories:
+            advisories.append(
+                AdvisorySpec(
+                    id="document-size",
+                    title="Large Document",
+                    message=(
+                        f"This document has {line_count} lines ({len(model.directives)} directives). "
+                        "Use single-pane mode or directive source toggles to reduce visual load."
+                    ),
+                    actions=[
+                        AdvisoryAction("single-pane", "single pane", "ui.toggle_single_pane"),
+                        AdvisoryAction("dismiss", "dismiss", "advisory.dismiss"),
+                    ],
+                    level="warning",
+                )
+            )
+
+        if self._active_conflict_message is not None and "external-change" not in self._dismissed_advisories:
+            advisories.append(
+                AdvisorySpec(
+                    id="external-change",
+                    title="External Change Detected",
+                    message=self._active_conflict_message,
+                    actions=[
+                        AdvisoryAction("reload", "reload", "document.reload"),
+                        AdvisoryAction("dismiss", "dismiss", "advisory.dismiss"),
+                    ],
+                    level="error",
+                )
+            )
+
+        return advisories
+
+    def _apply_layout_mode(self) -> None:
+        source_pane = self.query_one("#source-pane", Vertical)
+        render_pane = self.query_one("#render-pane", DocumentView)
+        if self._single_pane_mode:
+            source_pane.styles.display = "none"
+            render_pane.styles.width = "100%"
+        else:
+            source_pane.styles.display = "block"
+            render_pane.styles.width = "1fr"
+
+    def _render_title(self) -> str:
+        return "Document (Single Pane)" if self._single_pane_mode else "Rendered"
+
+    def _set_source_editor_text(self, text: str) -> None:
+        editor = self.query_one("#source-editor", TextArea)
+        self._loading_source = True
+        editor.load_text(text)
+        self._loading_source = False
+
+    def _mark_source_dirty(self) -> None:
+        if self._source_dirty:
+            return
+        self._source_dirty = True
+        self._set_source_title()
+        self.log_status("Source buffer modified. Press Ctrl+S to save and reparse.")
+
+    def _replace_directive_text(
+        self,
+        buffer_text: str,
+        directive: Directive,
+        previous_text: str,
+        new_text: str,
+    ) -> str | None:
+        lines = buffer_text.splitlines()
+        if directive.start_line <= directive.end_line and directive.end_line < len(lines):
+            current_slice = "\n".join(lines[directive.start_line : directive.end_line + 1])
+            if current_slice == previous_text:
+                replacement = [new_text] if new_text else []
+                lines[directive.start_line : directive.end_line + 1] = replacement
+                return "\n".join(lines)
+
+        occurrences = buffer_text.count(previous_text)
+        if occurrences == 1:
+            return buffer_text.replace(previous_text, new_text, 1)
+
+        return None
+
+    def _layout_binding_description(self) -> str:
+        return "Split Pane" if self._single_pane_mode else "Single Pane"
+
+    def _refresh_layout_binding(self) -> None:
+        description = self._layout_binding_description()
+        for key, bindings in list(self._bindings.key_to_bindings.items()):
+            updated = False
+            new_bindings: list[Binding] = []
+            for binding in bindings:
+                if binding.id == self.LAYOUT_BINDING_ID:
+                    new_bindings.append(replace(binding, description=description))
+                    updated = True
+                else:
+                    new_bindings.append(binding)
+            if updated:
+                self._bindings.key_to_bindings[key] = new_bindings
+        self.refresh_bindings()

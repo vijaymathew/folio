@@ -59,13 +59,15 @@ Remote backends are intentionally excluded from this first cut.
 - manual blocks execute when `Run` is pressed
 - stdout and tracebacks are returned to the renderer without running code in the main TUI process
 
-The worker uses a constrained execution policy:
+The worker uses a hardened sandbox policy:
 
 - only a small safe subset of builtins is exposed
 - imports are restricted to an explicit allowlist
 - dangerous names like `open`, `eval`, `exec`, and `__import__` are blocked
 - function/class definitions, `try`, `with`, `raise`, and `while` are rejected
-- subprocess execution is time-limited, with resource limits applied where the platform supports them
+- the worker runs in an isolated interpreter (`-I -S -B`) with a scrubbed environment and temp working directory
+- subprocess execution is time-limited, with stricter CPU, memory, file-size, descriptor, and core-dump limits where the platform supports them
+- Python audit hooks block filesystem, process, and network operations even if user code escapes the AST-level restrictions
 
 The allowlist currently includes common document-compute modules such as:
 
@@ -80,6 +82,8 @@ The allowlist currently includes common document-compute modules such as:
 - `re`
 - `string`
 - `textwrap`
+
+This is substantially stronger than the earlier “safe subset” worker, but it is still not a formal kernel-enforced sandbox against malicious native code or CPython escape bugs.
 
 `table(rows)` is also available inside `::py` blocks. When a block calls it with a list of dictionaries, the corresponding `::table` renderer can display those structured rows directly.
 

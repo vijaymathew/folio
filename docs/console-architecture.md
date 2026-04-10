@@ -399,8 +399,8 @@ Status key:
 - `done` returns exported variables
 - `done` returns table-compatible structured results
 - `done` returns tracebacks / errors
-- `partial` future path to stricter sandboxing
-  There is a constrained execution policy, but it is not a hardened sandbox.
+- `done` hardened sandboxing path
+  The worker now runs under an isolated interpreter with a scrubbed environment, stronger resource limits, and audit-hook blocking for filesystem, process, and network operations. This is still not perfect sandboxing.
 
 ### Data Model
 

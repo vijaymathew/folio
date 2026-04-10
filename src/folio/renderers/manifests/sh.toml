@@ -1,0 +1,40 @@
+[renderer]
+directive_type = "sh"
+display_name = "Shell Command"
+description = "Privileged shell command block for runbook-style execution."
+version = "1.0.0"
+supports_inline_source = true
+supports_editing = false
+
+[[params]]
+name = "cmd"
+required = true
+description = "Shell command string to execute."
+
+[[params]]
+name = "cwd"
+description = "Working directory for the command."
+
+[[params]]
+name = "trust"
+default = "\"review-before-running\""
+description = "Author-provided trust hint for documentation."
+
+[[actions]]
+name = "sh.run"
+description = "Execute the privileged shell command."
+
+[actions.payload_schema]
+directive = "Directive"
+
+[capabilities]
+events = true
+directive_lookup = true
+trust_state = true
+
+[sandbox]
+execution_mode = "shell-subprocess"
+network = true
+storage = true
+document_text = false
+notes = "Not sandboxed like ::py. App-level trust gating is mandatory for untrusted documents."

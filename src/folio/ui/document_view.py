@@ -301,6 +301,13 @@ class DocumentView(VerticalScroll):
                 output_lines = max(1, len((result.error or "").splitlines()) or 1)
             return code_lines + output_lines + (1 if run_mode == "manual" else 0) + 4
 
+        if directive.type == "sh":
+            return 4
+
+        if directive.type == "sh-output":
+            body_lines = max(1, len(directive.body) or 1)
+            return body_lines + 3
+
         if directive.type == "table":
             rows = self._table_row_count(directive, ctx)
             return max(source_lines, rows + 5)

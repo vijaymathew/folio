@@ -14,6 +14,7 @@ from folio.core.models import Directive, DocumentModel, TextMutation
 from folio.core.mutations import MutationEngine
 from folio.core.parser import DirectiveParser
 from folio.core.registry import CapabilityRegistry
+from folio.core.sh_runner import ShRunner
 from folio.core.store import DocumentConflictError, DocumentStore
 from folio.core.web_reader import WebReader, resolve_web_url
 from folio.python.worker import PyWorker
@@ -21,6 +22,7 @@ from folio.renderers.base import AdvisoryAction, AdvisorySpec, RenderContext
 from folio.renderers.file import FileRenderer
 from folio.renderers.note import NoteRenderer
 from folio.renderers.py import PyRenderer
+from folio.renderers.sh import ShOutputRenderer, ShRenderer
 from folio.renderers.table import TableRenderer
 from folio.renderers.task import TaskRenderer
 from folio.renderers.web import WebRenderer
@@ -144,6 +146,31 @@ class FolioApp(App[None]):
     .note-content {
       height: auto;
     }
+    .sh-widget, .sh-output-widget {
+      height: auto;
+      border: round $surface-lighten-1;
+      padding: 1;
+      margin-bottom: 1;
+    }
+    .sh-toolbar, .sh-output-meta {
+      height: auto;
+      margin-bottom: 1;
+    }
+    .sh-meta, .sh-output-summary {
+      width: 1fr;
+      color: $text-muted;
+    }
+    .sh-run, .sh-output-exit {
+      width: 18;
+    }
+    .sh-command, .sh-stdout, .sh-stderr {
+      height: auto;
+    }
+    .sh-stderr {
+      border: round $error;
+      padding: 1;
+      margin-top: 1;
+    }
     .web-widget {
       height: auto;
       border: round $surface-lighten-1;
@@ -220,9 +247,10 @@ class FolioApp(App[None]):
         Binding("f6", "toggle_single_pane", "Split Pane", id=LAYOUT_BINDING_ID),
     ]
 
-    def __init__(self, document_path: Path) -> None:
+    def __init__(self, document_path: Path, *, trusted_document: bool = True) -> None:
         super().__init__()
         self.document_path = document_path
+        self._trusted_document = trusted_document
         self.store = DocumentStore(document_path)
         self.parser = DirectiveParser()
         self.mutations = MutationEngine(self.store)
@@ -230,6 +258,7 @@ class FolioApp(App[None]):
         self.registry = CapabilityRegistry()
         self.model = DocumentModel(text="")
         self.py_worker = PyWorker()
+        self.sh_runner = ShRunner()
         self.web_reader = WebReader()
         self.py_results = {}
         self.web_results = {}
@@ -239,12 +268,15 @@ class FolioApp(App[None]):
         self._source_view_keys: set[str] = set()
         self._dismissed_advisories: set[str] = set()
         self._active_conflict_message: str | None = None
+        self._pending_shell_confirmations: set[str] = set()
         self._subscribe_events()
         self._register_renderers()
 
     def _register_renderers(self) -> None:
         self.registry.register(TaskRenderer)
         self.registry.register(PyRenderer)
+        self.registry.register(ShRenderer)
+        self.registry.register(ShOutputRenderer)
         self.registry.register(TableRenderer)
         self.registry.register(NoteRenderer)
         self.registry.register(FileRenderer)
@@ -253,6 +285,7 @@ class FolioApp(App[None]):
     def _subscribe_events(self) -> None:
         self.events.subscribe("task.toggle", self.toggle_task)
         self.events.subscribe("py.run", self.run_py_block)
+        self.events.subscribe("sh.run", self.run_sh_block)
         self.events.subscribe("table.edit", self.update_table_directive)
         self.events.subscribe("directive.toggle_view", self.toggle_directive_view)
         self.events.subscribe("directive.source_edit", self.update_directive_source_buffer)
@@ -323,6 +356,9 @@ class FolioApp(App[None]):
     def _py_directives(self) -> list[Directive]:
         return self.model.directive_index.directives_of_type("py")
 
+    def _sh_directives(self) -> list[Directive]:
+        return self.model.directive_index.directives_of_type("sh")
+
     def _run_autorun_blocks(self) -> dict[str, object]:
         directives = self._py_directives()
         if not directives:
@@ -368,6 +404,27 @@ class FolioApp(App[None]):
         else:
             self.log_status(f"{directive.title()} failed: {result.error}", error=True)
         self.reload_render_pane()
+
+    def run_sh_block(self, directive: Directive) -> None:
+        key = directive.key()
+        if not self._trusted_document and key not in self._pending_shell_confirmations:
+            self._pending_shell_confirmations.add(key)
+            self.log_status(
+                f"{directive.title()} is in an untrusted document. Review the command, then press Run again to execute.",
+                error=True,
+            )
+            self.reload_render_pane()
+            return
+
+        self._pending_shell_confirmations.discard(key)
+        command = directive.params.get("cmd", '""').strip('"')
+        cwd = directive.params.get("cwd")
+        self.log_status(f"Running {directive.title()} in the shell: {command}")
+        result = self.sh_runner.run(key, command, cwd)
+        if self._write_sh_output_block(directive, result):
+            self.log_status(
+                f"{directive.title()} completed with exit={result.exit_code} in {result.duration_seconds:.2f}s."
+            )
 
     def reload_render_pane(self) -> None:
         model = self.model
@@ -535,9 +592,12 @@ class FolioApp(App[None]):
             document_path=self.document_path,
             source_text=editor.text,
             directives_by_id=model.directive_index.by_id,
+            directive_find=model.directive_index.find,
             directive_source_view=set(self._source_view_keys),
             advisories=self._build_advisories(model),
             single_pane_mode=self._single_pane_mode,
+            document_trusted=self._trusted_document,
+            pending_shell_confirmations=set(self._pending_shell_confirmations),
         )
 
     def _build_advisories(self, model: DocumentModel) -> list[AdvisorySpec]:
@@ -640,6 +700,38 @@ class FolioApp(App[None]):
             max_fetch_bytes=max_fetch_bytes,
             timeout_seconds=timeout_seconds,
         )
+
+    def _write_sh_output_block(self, directive: Directive, result) -> bool:
+        params = {
+            "exit": str(result.exit_code),
+            "duration": f'"{result.duration_seconds:.2f}s"',
+            "ts": f'"{result.timestamp}"',
+        }
+        header = self._directive_header("sh-output", directive.id, params)
+        body: list[str] = ["[stdout]"]
+        body.extend(result.stdout or [""])
+        if result.stderr:
+            body.extend(["", "[stderr]", *result.stderr])
+        new_text = "\n".join([header, *body, "::end"])
+
+        existing = self.model.directive_index.find("sh-output", directive.key())
+        if existing is None:
+            mutation = TextMutation(
+                kind="append",
+                start_line=directive.end_line + 1,
+                end_line=directive.end_line,
+                new_text=new_text,
+                source="sh.run",
+            )
+        else:
+            mutation = TextMutation(
+                kind="replace",
+                start_line=existing.start_line,
+                end_line=existing.end_line,
+                new_text=new_text,
+                source="sh.run",
+            )
+        return self._apply_mutation(mutation, success_message=None)
 
     def _refresh_layout_binding(self) -> None:
         description = self._layout_binding_description()

@@ -7,6 +7,7 @@ from folio.renderers.base import RenderContext
 from folio.renderers.file import FileRenderer
 from folio.renderers.note import NoteRenderer
 from folio.renderers.py import PyRenderer
+from folio.renderers.sh import ShOutputRenderer, ShRenderer
 from folio.renderers.table import TableRenderer
 from folio.renderers.task import TaskRenderer
 from folio.renderers.web import WebRenderer
@@ -14,7 +15,7 @@ from folio.renderers.web import WebRenderer
 
 def _registry() -> CapabilityRegistry:
     registry = CapabilityRegistry()
-    for renderer in (TaskRenderer, PyRenderer, TableRenderer, NoteRenderer, FileRenderer, WebRenderer):
+    for renderer in (TaskRenderer, PyRenderer, ShRenderer, ShOutputRenderer, TableRenderer, NoteRenderer, FileRenderer, WebRenderer):
         registry.register(renderer)
     return registry
 
@@ -22,7 +23,7 @@ def _registry() -> CapabilityRegistry:
 def test_registry_exposes_supported_types_and_manifests() -> None:
     registry = _registry()
 
-    assert registry.supported_types() == ["file", "note", "py", "table", "task", "web"]
+    assert registry.supported_types() == ["file", "note", "py", "sh", "sh-output", "table", "task", "web"]
     assert registry.manifest_for("task") is TaskRenderer.manifest
     assert registry.manifest_for("py") is PyRenderer.manifest
     assert registry.manifest_for("task").manifest_path == TaskRenderer.manifest_path
@@ -69,6 +70,9 @@ def test_registry_filters_render_context_by_declared_capabilities(tmp_path: Path
         document_path=tmp_path / "example.folio",
         source_text="hidden",
         directives_by_id={"call-finance": object()},  # type: ignore[dict-item]
+        directive_find=lambda directive_type, key: None,
+        document_trusted=False,
+        pending_shell_confirmations={"check"},
     )
 
     task_ctx = registry.context_for("task", base_ctx)
@@ -90,3 +94,8 @@ def test_registry_filters_render_context_by_declared_capabilities(tmp_path: Path
     assert web_ctx.events is base_ctx.events
     assert web_ctx.py_results is None
     assert web_ctx.file_access is None
+
+    sh_ctx = registry.context_for("sh", base_ctx)
+    assert sh_ctx.events is base_ctx.events
+    assert sh_ctx.directive_find is base_ctx.directive_find
+    assert sh_ctx.document_trusted is base_ctx.document_trusted

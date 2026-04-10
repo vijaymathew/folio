@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol
+from typing import Callable, Protocol
 
 from textual.widget import Widget
 
@@ -89,9 +89,12 @@ class RenderContext:
     file_access: RendererFileAccess | None = None
     source_text: str | None = None
     directives_by_id: dict[str, Directive] | None = None
+    directive_find: Callable[[str, str], Directive | None] | None = None
     directive_source_view: set[str] | None = None
     advisories: list[AdvisorySpec] | None = None
     single_pane_mode: bool = False
+    document_trusted: bool = True
+    pending_shell_confirmations: set[str] | None = None
 
 
 @dataclass(slots=True)
@@ -118,6 +121,7 @@ class CapabilitySpec:
     source_text: bool = False
     directive_lookup: bool = False
     filesystem_read: bool = False
+    trust_state: bool = False
 
 
 @dataclass(slots=True)

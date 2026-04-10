@@ -4,7 +4,7 @@ import asyncio
 import shutil
 from pathlib import Path
 
-from folio.core.models import WebLink, WebPageResult
+from folio.core.models import ShRunResult, WebLink, WebPageResult
 from folio.renderers.base import widget_id_fragment
 from folio.renderers.table import TableEditor
 from folio.ui.document_view import DocumentView
@@ -156,7 +156,7 @@ def test_file_directive_toggle_uses_safe_widget_ids(tmp_path: Path) -> None:
     source = Path("/home/vijay/Projects/folio/docs/example.folio")
     doc = tmp_path / "example.folio"
     shutil.copyfile(source, doc)
-    key_fragment = widget_id_fragment("docs/example.folio")
+    key_fragment = widget_id_fragment("docs/console-architecture.md")
 
     async def scenario() -> None:
         app = FolioApp(doc)
@@ -258,3 +258,91 @@ def test_web_reader_fetches_text_only_page(tmp_path: Path) -> None:
             assert result.links[0].url.endswith("/docs")
 
     asyncio.run(scenario())
+
+
+def test_sh_run_writes_output_block_and_rerun_replaces_it(tmp_path: Path) -> None:
+    doc = tmp_path / "runbook.folio"
+    doc.write_text('::sh[check]{cmd="echo one" cwd=/tmp trust=author}\n', encoding="utf-8")
+
+    results = [
+        ShRunResult(
+            key="check",
+            command="echo one",
+            cwd="/tmp",
+            exit_code=0,
+            stdout=["first run"],
+            stderr=[],
+            duration_seconds=0.2,
+            timestamp="2026-04-10T12:00:00+00:00",
+        ),
+        ShRunResult(
+            key="check",
+            command="echo one",
+            cwd="/tmp",
+            exit_code=1,
+            stdout=[],
+            stderr=["second run failed"],
+            duration_seconds=0.4,
+            timestamp="2026-04-10T12:01:00+00:00",
+        ),
+    ]
+
+    async def scenario() -> None:
+        app = FolioApp(doc)
+        app.sh_runner.run = lambda key, command, cwd=None: results.pop(0)
+        async with app.run_test(size=(140, 45)) as pilot:
+            await pilot.pause(0.2)
+            app.query_one("#run-sh-check", Button).press()
+            await pilot.pause(0.3)
+            app.query_one("#run-sh-check", Button).press()
+            await pilot.pause(0.3)
+
+    asyncio.run(scenario())
+
+    updated = doc.read_text(encoding="utf-8")
+    assert updated.count("::sh-output[check]") == 1
+    assert "second run failed" in updated
+    assert "first run" not in updated
+    assert 'exit=1' in updated
+
+
+def test_sh_in_untrusted_document_requires_confirmation_before_execution(tmp_path: Path) -> None:
+    doc = tmp_path / "untrusted.folio"
+    doc.write_text('::sh[check]{cmd="echo one" cwd=/tmp trust=author}\n', encoding="utf-8")
+    called = {"count": 0}
+
+    async def scenario() -> None:
+        app = FolioApp(doc, trusted_document=False)
+
+        def fake_run(key, command, cwd=None):
+            called["count"] += 1
+            return ShRunResult(
+                key=key,
+                command=command,
+                cwd=cwd or ".",
+                exit_code=0,
+                stdout=["ok"],
+                stderr=[],
+                duration_seconds=0.1,
+                timestamp="2026-04-10T12:00:00+00:00",
+            )
+
+        app.sh_runner.run = fake_run
+        async with app.run_test(size=(140, 45)) as pilot:
+            await pilot.pause(0.2)
+            run_button = app.query_one("#run-sh-check", Button)
+            assert run_button.label.plain == "Run"
+            run_button.press()
+            await pilot.pause(0.2)
+            assert called["count"] == 0
+            assert "check" in app._pending_shell_confirmations
+            confirm_button = app.query_one("#run-sh-check", Button)
+            assert confirm_button.label.plain == "Confirm Run"
+            confirm_button.press()
+            await pilot.pause(0.3)
+
+    asyncio.run(scenario())
+
+    updated = doc.read_text(encoding="utf-8")
+    assert called["count"] == 1
+    assert "::sh-output[check]" in updated

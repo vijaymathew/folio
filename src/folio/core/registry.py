@@ -70,6 +70,11 @@ class CapabilityRegistry:
             file_access=RendererFileAccess(base_ctx.document_path) if caps.filesystem_read else None,
             source_text=base_ctx.source_text if caps.source_text else None,
             directives_by_id=base_ctx.directives_by_id if caps.directive_lookup else None,
+            directive_find=base_ctx.directive_find if caps.directive_lookup else None,
+            document_trusted=base_ctx.document_trusted if caps.trust_state else True,
+            pending_shell_confirmations=(
+                set(base_ctx.pending_shell_confirmations or set()) if caps.trust_state else None
+            ),
         )
 
     def supported_types(self) -> list[str]:
@@ -98,6 +103,7 @@ class CapabilityRegistry:
                 source_text=bool(capabilities.get("source_text", False)),
                 directive_lookup=bool(capabilities.get("directive_lookup", False)),
                 filesystem_read=bool(capabilities.get("filesystem_read", False)),
+                trust_state=bool(capabilities.get("trust_state", False)),
             ),
             sandbox=SandboxSpec(
                 execution_mode=str(sandbox.get("execution_mode", "in-process")),

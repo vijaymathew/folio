@@ -419,7 +419,7 @@ For untrusted documents:
 
 The best starting point is:
 
-- [example.folio](/home/vijay/Projects/folio/docs/example.folio)
+- [example.folio](./example.folio)
 
 It includes working examples of:
 

@@ -4,9 +4,9 @@ import asyncio
 import shutil
 from pathlib import Path
 
-from folio.ui.app import FolioApp
 from folio.renderers.table import TableEditor
-from textual.widgets import Button, DataTable, Input
+from folio.ui.app import FolioApp
+from textual.widgets import Button, DataTable
 
 
 def test_task_checkbox_click_rewrites_source(tmp_path: Path) -> None:
@@ -60,10 +60,9 @@ def test_table_edit_updates_document_text(tmp_path: Path) -> None:
             table = app.query_one(TableEditor)
             grid = table.query_one(DataTable)
             grid.move_cursor(row=0, column=2)
+            grid.focus()
             await pilot.pause(0.2)
-            edit_input = table.query_one(Input)
-            edit_input.value = "9999"
-            table.query_one("#table-apply", Button).press()
+            await pilot.press("9", "9", "9", "9", "enter")
             await pilot.pause(0.2)
 
     asyncio.run(scenario())

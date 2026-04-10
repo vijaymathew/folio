@@ -4,9 +4,11 @@ import json
 from copy import deepcopy
 from typing import Any
 
+from textual import events
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
-from textual.widgets import Button, DataTable, Input, Static
+from textual.containers import Vertical
+from textual.coordinate import Coordinate
+from textual.widgets import DataTable, Static
 
 from folio.core.models import Directive
 from folio.renderers.base import RenderContext
@@ -36,14 +38,14 @@ class TableEditor(Vertical):
         self.ctx = ctx
         self.columns = self._collect_columns(rows)
         self.selected: tuple[int, int] | None = None
+        self.editing_cell: tuple[int, int] | None = None
+        self.edit_buffer = ""
+        self.original_value = ""
 
     def compose(self) -> ComposeResult:
         yield Static(self.directive.title(), classes="table-title")
         yield DataTable(id=f"table-grid-{self.directive.key()}")
-        yield Static("Select a cell to edit.", id="table-edit-status")
-        with Horizontal(classes="table-editor-input-row"):
-            yield Input(placeholder="New cell value", id="table-edit-input")
-            yield Button("Apply", id="table-apply")
+        yield Static("Arrow keys move. Type to edit the highlighted cell. Enter saves. Esc cancels.", id="table-edit-status")
 
     def on_mount(self) -> None:
         table = self.query_one(DataTable)
@@ -52,9 +54,10 @@ class TableEditor(Vertical):
         for column in self.columns:
             table.add_column(column)
         for row in self.rows:
-            table.add_row(*(str(row.get(column, "—")) for column in self.columns))
+            table.add_row(*(self._display_value(row, column) for column in self.columns))
         if self.rows and self.columns:
             self._set_active_cell(0, 0)
+        table.focus()
 
     def on_data_table_cell_highlighted(self, event: DataTable.CellHighlighted) -> None:
         self._set_active_cell(event.coordinate.row, event.coordinate.column)
@@ -63,39 +66,147 @@ class TableEditor(Vertical):
         self._set_active_cell(event.coordinate.row, event.coordinate.column)
 
     def _set_active_cell(self, row_index: int, column_index: int) -> None:
+        if self.editing_cell is not None and self.editing_cell != (row_index, column_index):
+            self._cancel_edit()
         self.selected = (row_index, column_index)
         column = self.columns[column_index]
-        value = self.rows[row_index].get(column, "")
-        self.query_one("#table-edit-status", Static).update(f"Editing {column} at row {row_index + 1}")
-        edit_input = self.query_one("#table-edit-input", Input)
-        edit_input.value = str(value)
-        edit_input.focus()
+        self.query_one("#table-edit-status", Static).update(
+            f"{column} row {row_index + 1}. Type to edit. Enter saves. Esc cancels."
+        )
 
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        if event.input.id == "table-edit-input":
-            self._apply_edit()
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "table-apply":
-            self._apply_edit()
-
-    def _apply_edit(self) -> None:
-        if self.ctx.events is None:
+    def on_key(self, event: events.Key) -> None:
+        table = self.query_one(DataTable)
+        if not table.has_focus:
             return
-        if self.selected is None:
-            table = self.query_one(DataTable)
-            coordinate = table.cursor_coordinate
-            self._set_active_cell(coordinate.row, coordinate.column)
 
-        row_index, column_index = self.selected
+        if event.key == "enter" and self.editing_cell is not None:
+            self._commit_edit()
+            event.stop()
+            return
+
+        if event.key == "escape" and self.editing_cell is not None:
+            self._cancel_edit()
+            event.stop()
+            return
+
+        if event.key == "backspace":
+            self._delete_last_character()
+            event.stop()
+            return
+
+        if event.key == "delete":
+            self._clear_active_cell()
+            event.stop()
+            return
+
+        if event.is_printable and event.character is not None:
+            self._append_character(event.character)
+            event.stop()
+
+    def _append_character(self, character: str) -> None:
+        coordinate = self._active_coordinate()
+        if coordinate is None:
+            return
+
+        if self.editing_cell != coordinate:
+            self._begin_edit(coordinate, replace=True)
+
+        self.edit_buffer += character
+        self._update_visible_edit_buffer()
+
+    def _delete_last_character(self) -> None:
+        coordinate = self._active_coordinate()
+        if coordinate is None:
+            return
+
+        if self.editing_cell != coordinate:
+            self._begin_edit(coordinate, replace=False)
+
+        self.edit_buffer = self.edit_buffer[:-1]
+        self._update_visible_edit_buffer()
+
+    def _clear_active_cell(self) -> None:
+        coordinate = self._active_coordinate()
+        if coordinate is None:
+            return
+
+        if self.editing_cell != coordinate:
+            self._begin_edit(coordinate, replace=False)
+
+        self.edit_buffer = ""
+        self._update_visible_edit_buffer()
+
+    def _begin_edit(self, coordinate: tuple[int, int], *, replace: bool) -> None:
+        row_index, column_index = coordinate
         column = self.columns[column_index]
-        raw = self.query_one("#table-edit-input", Input).value
-        self.rows[row_index][column] = _coerce_value(raw)
+        current_value = self.rows[row_index].get(column, "")
+        self.editing_cell = coordinate
+        self.original_value = "" if current_value == "—" else str(current_value)
+        self.edit_buffer = "" if replace else self.original_value
+        self._update_status(editing=True)
+
+    def _commit_edit(self) -> None:
+        if self.ctx.events is None or self.editing_cell is None:
+            return
+
+        row_index, column_index = self.editing_cell
+        column = self.columns[column_index]
+        value = _coerce_value(self.edit_buffer)
+        self.rows[row_index][column] = value
+        self._update_grid_cell(self.editing_cell, str(value))
+        self._reset_edit_state()
         self.ctx.events.emit(
             "table.edit",
             directive=self.directive,
             rows=deepcopy(self.rows),
         )
+        self._update_status()
+
+    def _cancel_edit(self) -> None:
+        if self.editing_cell is None:
+            return
+
+        row_index, column_index = self.editing_cell
+        column = self.columns[column_index]
+        self._update_grid_cell(self.editing_cell, self._display_value(self.rows[row_index], column))
+        self._reset_edit_state()
+        self._update_status()
+
+    def _update_visible_edit_buffer(self) -> None:
+        if self.editing_cell is None:
+            return
+        self._update_grid_cell(self.editing_cell, self.edit_buffer)
+        self._update_status(editing=True)
+
+    def _update_grid_cell(self, coordinate: tuple[int, int], value: str) -> None:
+        table = self.query_one(DataTable)
+        table.update_cell_at(Coordinate(*coordinate), value, update_width=True)
+
+    def _update_status(self, *, editing: bool = False) -> None:
+        coordinate = self._active_coordinate()
+        if coordinate is None:
+            return
+        row_index, column_index = coordinate
+        column = self.columns[column_index]
+        status = self.query_one("#table-edit-status", Static)
+        if editing:
+            status.update(
+                f"Editing {column} row {row_index + 1}: {self.edit_buffer!r}. Enter saves. Esc cancels."
+            )
+            return
+        status.update(f"{column} row {row_index + 1}. Type to edit. Enter saves. Esc cancels.")
+
+    def _active_coordinate(self) -> tuple[int, int] | None:
+        if self.selected is not None:
+            return self.selected
+        table = self.query_one(DataTable)
+        coordinate = table.cursor_coordinate
+        return (coordinate.row, coordinate.column)
+
+    def _reset_edit_state(self) -> None:
+        self.editing_cell = None
+        self.edit_buffer = ""
+        self.original_value = ""
 
     def _collect_columns(self, rows: list[dict[str, object]]) -> list[str]:
         columns: list[str] = []
@@ -104,6 +215,10 @@ class TableEditor(Vertical):
                 if key not in columns:
                     columns.append(key)
         return columns or ["value"]
+
+    def _display_value(self, row: dict[str, object], column: str) -> str:
+        value = row.get(column, "—")
+        return str(value)
 
 
 class TableRenderer:

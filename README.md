@@ -34,7 +34,7 @@ pytest
 - `q`: quit
 - `r`: reload document from disk
 - edit the source pane directly, then press `Ctrl+S` to save, reparse, and rerender
-- click `Toggle` on a task to write a text mutation back to the source file
+- click a task checkbox to write a text mutation back to the source file
 - click `Run` on a `::py` block to execute document-scoped Python in a subprocess worker
 
 ## Scope
@@ -82,6 +82,8 @@ The allowlist currently includes common document-compute modules such as:
 - `textwrap`
 
 `table(rows)` is also available inside `::py` blocks. When a block calls it with a list of dictionaries, the corresponding `::table` renderer can display those structured rows directly.
+
+`::table` supports direct keyboard editing in the grid itself: move the cell cursor with the arrow keys, type to replace the highlighted value, press `Enter` to save the text mutation, and press `Esc` to cancel the active edit.
 
 `::note` directives can resolve a section from a local `.md`, `.folio`, or `.txt` file. If `path="..."` is omitted, Folio will try to resolve the note id as a document-relative file name.
 

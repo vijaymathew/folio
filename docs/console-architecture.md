@@ -435,8 +435,7 @@ Status key:
 
 - `done` read-only rendering from `table(rows)` output
 - `done` cell editing through text mutations
-- `partial` editing UX
-  Editing works, but it is select-then-edit-via-input rather than direct in-cell typing.
+- `done` direct in-cell editing UX
 
 #### `::note`
 

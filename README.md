@@ -1,19 +1,24 @@
-# folio
+# Folio
 
-Minimal Textual scaffold for a console-first Folio prototype.
+**Folio** is a CLI-based prototype for a text-native architecture where **the document is the computer**. 
 
-## What is here
+Instead of standalone applications owning your data, Folio treats a plain text file as the primary substrate for computing. Applications are downgraded to **renderers**—transient lenses that interpret structured directives (`::type[id]{params}`) inline within your prose and write all state changes back as human-readable text mutations.
 
-- `DocumentStore`: loads and saves the text file.
-- `DirectiveParser`: line-oriented parser for `::directive[id]{params}` blocks.
-- `CapabilityRegistry`: maps directive types to renderers.
-- `MutationEngine`: applies text mutations and reparses.
-- `Textual` app: source pane plus rendered document pane.
-- Sample directive renderers for `task`, `py`, `table`, `note`, and `file`.
+This implementation is a minimal Textual-based scaffold designed to validate the core pillars of the [The Document is the Computer](https://vijaymathew.github.io/books/ui/the-document-is-the-computer.html) philosophy:
 
-This is intentionally small. It is a starting point for validating the text-first architecture in a console renderer.
+- **Text as Ground Truth:** All data (tasks, tables, calculations) lives in a durable, portable `.folio` file.
+- **Apps as Renderers:** Capabilities like task management, Python execution, and structured tables are summoned via a universal grammar.
+- **No Hidden State:** The document serves as an event-sourced log; every action is recorded as a text mutation.
+- **Graceful Degradation:** The information remains readable by humans and simple Unix tools even without a specialized renderer.
 
-Renderer and registry authoring notes live in [docs/renderer-interface.md](/home/vijay/Projects/folio/docs/renderer-interface.md).
+## Core Components
+
+- `DocumentStore`: Manages loading and atomic saving of the text substrate.
+- `DirectiveParser`: A line-oriented parser for `::directive` blocks.
+- `CapabilityRegistry`: Maps directive types to their respective renderers and manages manifests.
+- `MutationEngine`: Applies surgical text mutations to the source file and triggers reparsing.
+- `Textual UI`: A dual-pane console interface providing a raw source view and a rich rendered view.
+- **Built-in Renderers:** Initial implementations for `task`, `py` (sandboxed Python execution), `table` (grid editing), `note`, and `file`.
 
 ## Installation
 
@@ -36,97 +41,20 @@ pip install -e .
 folio docs/example.folio
 ```
 
-## Tests
+## Usage & Controls
 
-```bash
-pip install -e ".[dev]"
-pytest
-```
+- `q`: Quit.
+- `r`: Reload document from disk.
+- `f6`: Toggle between single-pane and split-pane view.
+- `Ctrl+S`: Save the source pane, reparse, and rerender.
+- **Interactions:**
+    - Click a **task checkbox** to write a mutation back to the source file.
+    - Click **Run** on a `::py` block to execute sandboxed Python in a subprocess.
+    - Click **Source / Widget** to toggle the rendered view for a specific directive.
+    - Use arrow keys and `Enter` to edit `::table` cells directly in the grid.
 
-## Controls
+## Project Documentation
 
-- `q`: quit
-- `r`: reload document from disk
-- `f6`: switch between the default single-pane view and split-pane view
-- edit the source pane directly, then press `Ctrl+S` to save, reparse, and rerender
-- click a task checkbox to write a text mutation back to the source file
-- click `Run` on a `::py` block to execute document-scoped Python in a subprocess worker
-- click `Source` / `Widget` above a directive to toggle its rendered view
-
-## Scope
-
-Only document-owned state is in scope for this scaffold:
-
-- `::task`
-- `::py`
-- `::table`
-- `::note`
-- `::file`
-- `::web` as an experimental text-only reader
-
-Remote backends are otherwise intentionally excluded from this first cut.
-
-## Renderer Manifests
-
-Built-in renderers now register through checked-in TOML manifests under [src/folio/renderers/manifests](/home/vijay/Projects/folio/src/folio/renderers/manifests).
-
-The capability registry uses those manifests to:
-
-- discover renderer params and actions
-- expose manifest source for inspection
-- filter runtime renderer context by declared capabilities
-
-This gives Folio an explicit manifest/runtime boundary for built-in renderers. It is still lighter-weight than full per-renderer process isolation; only `::py` currently runs in a hardened subprocess sandbox.
-
-## Python Execution
-
-`::py` blocks now execute in a subprocess-backed worker:
-
-- blocks are evaluated in document order
-- earlier blocks populate the shared namespace for later ones
-- `run="auto"` blocks execute on reload
-- manual blocks execute when `Run` is pressed
-- stdout and tracebacks are returned to the renderer without running code in the main TUI process
-
-The worker uses a hardened sandbox policy:
-
-- only a small safe subset of builtins is exposed
-- imports are restricted to an explicit allowlist
-- dangerous names like `open`, `eval`, `exec`, and `__import__` are blocked
-- function/class definitions, `try`, `with`, `raise`, and `while` are rejected
-- the worker runs in an isolated interpreter (`-I -S -B`) with a scrubbed environment and temp working directory
-- subprocess execution is time-limited, with stricter CPU, memory, file-size, descriptor, and core-dump limits where the platform supports them
-- Python audit hooks block filesystem, process, and network operations even if user code escapes the AST-level restrictions
-
-The allowlist currently includes common document-compute modules such as:
-
-- `math`
-- `statistics`
-- `collections`
-- `datetime`
-- `decimal`
-- `fractions`
-- `functools`
-- `itertools`
-- `re`
-- `string`
-- `textwrap`
-
-This is substantially stronger than the earlier “safe subset” worker, but it is still not a formal kernel-enforced sandbox against malicious native code or CPython escape bugs.
-
-`table(rows)` is also available inside `::py` blocks. When a block calls it with a list of dictionaries, the corresponding `::table` renderer can display those structured rows directly.
-
-`::table` supports direct keyboard editing in the grid itself: move the cell cursor with the arrow keys, type to replace the highlighted value, press `Enter` to save the text mutation, and press `Esc` to cancel the active edit.
-
-`::note` directives can resolve a section from a local `.md`, `.folio`, or `.txt` file. If `path="..."` is omitted, Folio will try to resolve the note id as a document-relative file name.
-
-The bottom status pane surfaces:
-
-- autorun completion
-- manual worker runs
-- safety policy failures
-- external-change save conflicts
-- inline advisories
-- source buffer dirty/save state
-- task toggles
-- table-edit mutations
+- [Console Architecture Detail](docs/console-architecture.md)
+- [Renderer & Registry Authoring](docs/renderer-interface.md)
+- [Example .folio File](docs/example.folio)

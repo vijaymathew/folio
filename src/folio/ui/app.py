@@ -11,6 +11,7 @@ from textual.widgets import Button, Footer, Header, Static, TextArea
 
 from folio.core.events import EventBus
 from folio.core.contact_reader import ContactCard, ContactReader, ContactReaderError
+from folio.core.email_store import EmailStoreError, MaildirEmailStore
 from folio.core.models import Directive, DocumentModel, TextMutation
 from folio.core.mutations import MutationEngine
 from folio.core.parser import DirectiveParser
@@ -21,6 +22,7 @@ from folio.core.web_reader import WebReader, resolve_web_url
 from folio.python.worker import PyWorker
 from folio.renderers.base import AdvisoryAction, AdvisorySpec, RenderContext
 from folio.renderers.contact import ContactRenderer
+from folio.renderers.email import EmailRenderer
 from folio.renderers.file import FileRenderer
 from folio.renderers.note import NoteRenderer
 from folio.renderers.py import PyRenderer
@@ -161,6 +163,32 @@ class FolioApp(App[None]):
     .contact-save {
       width: 12;
     }
+    .email-widget {
+      height: auto;
+      border: round $surface-lighten-1;
+      padding: 1;
+      margin-bottom: 1;
+    }
+    .email-meta, .email-selected-meta {
+      color: $text-muted;
+      height: auto;
+      margin-bottom: 1;
+    }
+    .email-list, .email-actions {
+      height: auto;
+      margin-bottom: 1;
+    }
+    .email-open {
+      width: 1fr;
+      margin-bottom: 1;
+    }
+    .email-action {
+      width: 14;
+      margin-right: 1;
+    }
+    .email-body, .email-empty {
+      height: auto;
+    }
     .note-widget {
       height: auto;
       border: round $surface-lighten-1;
@@ -292,6 +320,7 @@ class FolioApp(App[None]):
         self.contact_reader = ContactReader()
         self.py_results = {}
         self.web_results = {}
+        self.email_selection: dict[str, str] = {}
         self._loading_source = False
         self._source_dirty = False
         self._single_pane_mode = True
@@ -311,6 +340,7 @@ class FolioApp(App[None]):
         self.registry.register(NoteRenderer)
         self.registry.register(FileRenderer)
         self.registry.register(ContactRenderer)
+        self.registry.register(EmailRenderer)
         self.registry.register(WebRenderer)
 
     def _subscribe_events(self) -> None:
@@ -319,6 +349,8 @@ class FolioApp(App[None]):
         self.events.subscribe("sh.run", self.run_sh_block)
         self.events.subscribe("table.edit", self.update_table_directive)
         self.events.subscribe("contact.save", self.save_contact)
+        self.events.subscribe("email.select", self.select_email_message)
+        self.events.subscribe("email.action", self.perform_email_action)
         self.events.subscribe("directive.toggle_view", self.toggle_directive_view)
         self.events.subscribe("directive.source_edit", self.update_directive_source_buffer)
         self.events.subscribe("web.reload", self.reload_web_directive)
@@ -704,6 +736,7 @@ class FolioApp(App[None]):
             events=self.events,
             py_results=self.py_results,
             web_results=self.web_results,
+            email_selection=dict(self.email_selection),
             document_path=self.document_path,
             source_text=editor.text,
             directives_by_id=model.directive_index.by_id,
@@ -714,6 +747,54 @@ class FolioApp(App[None]):
             document_trusted=self._trusted_document,
             pending_shell_confirmations=set(self._pending_shell_confirmations),
         )
+
+    def select_email_message(self, directive: Directive, message_key: str) -> None:
+        self.email_selection[directive.key()] = message_key
+        self.reload_render_pane()
+
+    def perform_email_action(self, directive: Directive, message_key: str, action: str) -> None:
+        base_ctx = self._build_render_context(self.model)
+        ctx = self.registry.context_for("email", base_ctx)
+        if ctx.file_access is None:
+            self.log_status(f"{directive.title()} action blocked: renderer file access unavailable.", error=True)
+            return
+
+        raw_path = directive.id or directive.params.get("path", '"unknown"').strip('"')
+        folder = directive.params.get("folder", '"Inbox"').strip('"') or "Inbox"
+        archive_folder = directive.params.get("archive-folder", '"Archive"').strip('"') or "Archive"
+        trash_folder = directive.params.get("trash-folder", '"Trash"').strip('"') or "Trash"
+
+        try:
+            path = ctx.file_access.resolve_document_relative(raw_path)
+            store = MaildirEmailStore(path)
+            if action == "mark_read":
+                store.mark_read(folder, message_key, True)
+                self.log_status(f"{directive.title()} marked message {message_key} as read.")
+            elif action == "mark_unread":
+                store.mark_read(folder, message_key, False)
+                self.log_status(f"{directive.title()} marked message {message_key} as unread.")
+            elif action == "star":
+                store.set_flagged(folder, message_key, True)
+                self.log_status(f"{directive.title()} starred message {message_key}.")
+            elif action == "unstar":
+                store.set_flagged(folder, message_key, False)
+                self.log_status(f"{directive.title()} unstarred message {message_key}.")
+            elif action == "trash":
+                store.move_to_folder(folder, message_key, trash_folder)
+                self.email_selection.pop(directive.key(), None)
+                self.log_status(f"{directive.title()} moved message {message_key} to {trash_folder}.")
+            elif action == "archive":
+                store.move_to_folder(folder, message_key, archive_folder)
+                self.email_selection.pop(directive.key(), None)
+                self.log_status(f"{directive.title()} moved message {message_key} to {archive_folder}.")
+            else:
+                self.log_status(f"{directive.title()} unknown email action: {action}", error=True)
+                return
+        except (EmailStoreError, PermissionError, OSError) as exc:
+            self.log_status(f"{directive.title()} action failed: {exc}", error=True)
+            return
+
+        self.reload_render_pane()
 
     def _build_advisories(self, model: DocumentModel) -> list[AdvisorySpec]:
         advisories: list[AdvisorySpec] = []

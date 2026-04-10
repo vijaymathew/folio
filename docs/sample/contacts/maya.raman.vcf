@@ -1,0 +1,10 @@
+BEGIN:VCARD
+VERSION:3.0
+FN:Maya Raman
+N:Raman;Maya;;;
+EMAIL;TYPE=internet:maya@example.com
+TEL:+1 415 555 0199
+ORG:Example Ltd
+TITLE:Operations Lead
+NOTE:Owns the release checklist and launch coordination.
+END:VCARD

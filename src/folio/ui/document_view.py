@@ -319,6 +319,10 @@ class DocumentView(VerticalScroll):
             limit = self._limit_lines(directive, default=6)
             return max(source_lines, 4 + (limit * 5))
 
+        if directive.type == "email":
+            limit = self._limit_lines(directive, default=20)
+            return max(source_lines, 12 + limit + 12)
+
         if directive.type == "note":
             return max(source_lines, max(4, len(directive.body) + 4))
 

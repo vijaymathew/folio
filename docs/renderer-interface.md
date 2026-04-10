@@ -80,6 +80,7 @@ class Renderer(Protocol):
 - `events`: shared `EventBus` for semantic actions
 - `py_results`: current `::py` evaluation results
 - `web_results`: current `::web` fetch results
+- `email_selection`: current ephemeral selected-message state for `::email`
 - `document_path`: path of the current document
 - `file_access`: restricted file access service for file-backed renderers
 - `source_text`: current in-memory document buffer
@@ -164,6 +165,7 @@ The registry enforces renderer capabilities by building a filtered `RenderContex
 
 - `events`: allows semantic event emission
 - `py_results`: allows reading `::py` worker results
+- `email_selection`: allows a renderer to read app-managed ephemeral selection state
 - `directive_lookup`: allows cross-reference lookup by directive id
 - `document_path`: exposes the current document path
 - `filesystem_read`: exposes `ctx.file_access` for reads

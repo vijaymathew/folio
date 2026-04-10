@@ -20,7 +20,7 @@ This implementation is a minimal Textual-based scaffold designed to validate the
 - `CapabilityRegistry`: Maps directive types to their respective renderers and manages manifests.
 - `MutationEngine`: Applies surgical text mutations to the source file and triggers reparsing.
 - `Textual UI`: A dual-pane console interface providing a raw source view and a rich rendered view.
-- **Built-in Renderers:** Initial implementations for `task`, `py` (sandboxed Python execution), `sh` (privileged runbook commands), `table` (grid editing), `note`, `file`, `contact` (local vCard reader), and `web` (text-only reader).
+- **Built-in Renderers:** Initial implementations for `task`, `py` (sandboxed Python execution), `sh` (privileged runbook commands), `table` (grid editing), `note`, `file`, `contact` (local vCard reader), `email` (Maildir mailbox reader), and `web` (text-only reader).
 
 ## Installation
 
@@ -86,6 +86,24 @@ pytest
 The renderer is read-only in this prototype and uses the registry-provided filesystem capability rather than ambient path access.
 
 For a single-contact `.vcf` file, the widget also exposes editable fields and a `Save` action that rewrites the vCard text on disk through the declared filesystem-write capability. Directory and multi-contact views remain read-only for now.
+
+## Email
+
+`::email` reads a local Maildir mailbox using Python's standard-library `mailbox.Maildir` abstraction. Example:
+
+```text
+::email[mail]{folder="Inbox" limit="20"}
+```
+
+The widget renders a text-native message list plus the selected message body and supports:
+
+- selecting a message to read
+- mark read / unread
+- star / unstar
+- move to `Trash`
+- move to `Archive`
+
+`Inbox` maps to the root Maildir. Other folders map to Maildir folders such as `Archive` or `Lists.Project`.
 
 ## Shell Execution
 

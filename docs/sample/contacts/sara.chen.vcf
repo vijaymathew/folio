@@ -1,0 +1,10 @@
+BEGIN:VCARD
+VERSION:3.0
+FN:Sara Chen
+N:Chen;Sara;;;
+EMAIL;TYPE=internet:sara@example.com
+TEL:+44 7700 900123
+ORG:Example Ltd
+TITLE:Head of Product
+NOTE:Met at ProductCon 2025. Prefers async communication.
+END:VCARD

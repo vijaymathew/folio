@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import mailbox
 import shutil
+from email.message import EmailMessage
 from pathlib import Path
 
 from folio.core.models import ShRunResult, WebLink, WebPageResult
 from folio.renderers.contact import ContactWidget
+from folio.renderers.email import EmailWidget
 from folio.renderers.base import widget_id_fragment
 from folio.renderers.table import TableEditor
 from folio.ui.document_view import DocumentView
@@ -33,6 +36,22 @@ async def _find_visible_table(app: FolioApp, pilot) -> TableEditor:
         render.scroll_to(y=offset, animate=False)
         await pilot.pause(0.1)
     raise AssertionError("TableEditor was not mounted in the render viewport")
+
+
+def _seed_maildir(path: Path) -> None:
+    maildir = mailbox.Maildir(path, create=True)
+    for subject, sender, body in (
+        ("Launch Notes", "maya@example.com", "Release checklist attached in plain text."),
+        ("Budget Review", "sara@example.com", "Please review the Q3 budget variance."),
+    ):
+        message = EmailMessage()
+        message["From"] = sender
+        message["To"] = "team@example.com"
+        message["Subject"] = subject
+        message["Date"] = "Fri, 11 Apr 2026 10:00:00 +0000"
+        message.set_content(body)
+        maildir.add(message)
+    maildir.flush()
 
 
 def test_task_checkbox_click_rewrites_source(tmp_path: Path) -> None:
@@ -426,6 +445,43 @@ def test_contact_widget_renders_and_saves_inline_contact_block(tmp_path: Path) -
     updated = doc.read_text(encoding="utf-8")
     assert "role = Chief Product Officer" in updated
     assert "notes = Prefers async communication." in updated
+
+
+def test_email_widget_reads_maildir_and_runs_actions(tmp_path: Path) -> None:
+    maildir_path = tmp_path / "mail"
+    _seed_maildir(maildir_path)
+    doc = tmp_path / "mail.folio"
+    doc.write_text('::email[mail]{folder="Inbox" limit="10"}\n', encoding="utf-8")
+
+    async def scenario() -> None:
+        app = FolioApp(doc)
+        async with app.run_test(size=(140, 45)) as pilot:
+            await pilot.pause(0.2)
+            widget = app.query_one(EmailWidget)
+            assert len(widget.summaries) == 2
+            assert widget.selected is not None
+            first_subject = widget.selected.subject
+
+            app.query_one(f"#email-read-{widget.key_fragment}", Button).press()
+            await pilot.pause(0.2)
+            widget = app.query_one(EmailWidget)
+            assert widget.selected is not None
+            assert "S" in widget.selected.flags
+
+            app.query_one(f"#email-star-{widget.key_fragment}", Button).press()
+            await pilot.pause(0.2)
+            widget = app.query_one(EmailWidget)
+            assert widget.selected is not None
+            assert "F" in widget.selected.flags
+
+            app.query_one(f"#email-archive-{widget.key_fragment}", Button).press()
+            await pilot.pause(0.3)
+            widget = app.query_one(EmailWidget)
+            assert len(widget.summaries) == 1
+            assert widget.selected is not None
+            assert widget.selected.subject != first_subject
+
+    asyncio.run(scenario())
 
 
 def test_sh_run_writes_output_block_and_rerun_replaces_it(tmp_path: Path) -> None:

@@ -8,6 +8,12 @@ Call finance about hardware variance
 Send Q3 brief to Sara
 ::end
 
+The contact and email widgets below use local sample data so the renderer can show both file-backed contacts and a Maildir mailbox.
+
+::contact[docs/sample/contacts]{limit="6"}
+
+::email[docs/sample/email]{folder="Inbox" limit="5" archive-folder="Archive" trash-folder="Trash"}
+
 The table and Python blocks below are placeholders in this scaffold, but they define the structure the console renderer needs to understand.
 
 ::py[q3-data]{run="auto"}

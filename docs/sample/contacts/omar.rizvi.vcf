@@ -1,0 +1,10 @@
+BEGIN:VCARD
+VERSION:3.0
+FN:Omar Rizvi
+N:Rizvi;Omar;;;
+EMAIL;TYPE=internet:omar@example.com
+TEL:+1 646 555 0142
+ORG:Northwind Labs
+TITLE:Finance Partner
+NOTE:Tracks quarterly hardware variance and vendor renewals.
+END:VCARD

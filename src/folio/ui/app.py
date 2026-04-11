@@ -275,6 +275,8 @@ class FolioApp(App[None]):
     .directive-container {
       height: auto;
       margin-bottom: 1;
+      padding: 0 1;
+      border: round transparent;
     }
     .directive-toolbar {
       height: auto;
@@ -283,6 +285,14 @@ class FolioApp(App[None]):
     .directive-title {
       width: 1fr;
       color: $text-muted;
+    }
+    .directive-container:focus, .directive-container:focus-within {
+      border: round $primary;
+      background: $boost;
+    }
+    .directive-container:focus .directive-title, .directive-container:focus-within .directive-title {
+      color: $primary-lighten-2;
+      text-style: bold;
     }
     .directive-toggle {
       width: 12;

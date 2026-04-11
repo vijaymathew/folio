@@ -302,6 +302,12 @@ class FolioApp(App[None]):
       border: round $surface-lighten-1;
       padding: 1;
     }
+    .directive-insert {
+      height: auto;
+      border: round $accent;
+      padding: 1;
+      margin: 1 0;
+    }
     .directive-source-input {
       width: 1fr;
       margin-bottom: 1;
@@ -364,6 +370,8 @@ class FolioApp(App[None]):
         self._single_pane_mode = True
         self._source_view_keys: set[str] = set()
         self._directive_edit_buffers: dict[str, str] = {}
+        self._directive_insert_positions: dict[str, str] = {}
+        self._directive_insert_buffers: dict[str, str] = {}
         self._dismissed_advisories: set[str] = set()
         self._active_conflict_message: str | None = None
         self._pending_shell_confirmations: set[str] = set()
@@ -395,6 +403,10 @@ class FolioApp(App[None]):
         self.events.subscribe("directive.edit_buffer", self.update_directive_edit_buffer)
         self.events.subscribe("directive.edit_save", self.save_directive_editor)
         self.events.subscribe("directive.edit_cancel", self.cancel_directive_editor)
+        self.events.subscribe("directive.insert_open", self.open_directive_inserter)
+        self.events.subscribe("directive.insert_buffer", self.update_directive_insert_buffer)
+        self.events.subscribe("directive.insert_save", self.save_directive_insert)
+        self.events.subscribe("directive.insert_cancel", self.cancel_directive_insert)
         self.events.subscribe("web.reload", self.reload_web_directive)
         self.events.subscribe("ui.toggle_single_pane", self.toggle_single_pane)
         self.events.subscribe("advisory.dismiss", self.dismiss_advisory)
@@ -432,6 +444,12 @@ class FolioApp(App[None]):
             if directive is not None:
                 new_text = focused.text if isinstance(focused, TextArea) else focused.value
                 self.save_directive_editor(directive, new_text)
+                return
+        if isinstance(focused, TextArea) and (focused.id or "").startswith("directive-insert-"):
+            target = self._directive_and_position_for_insert_editor_id(focused.id or "")
+            if target is not None:
+                directive, position = target
+                self.save_directive_insert(directive, position, focused.text)
                 return
         editor = self.query_one("#source-editor", TextArea)
         self._save_source_text(editor.text)
@@ -740,6 +758,8 @@ class FolioApp(App[None]):
 
     def open_directive_editor(self, directive: Directive) -> None:
         key = directive.instance_key()
+        self._directive_insert_positions.pop(key, None)
+        self._directive_insert_buffers.pop(key, None)
         self._source_view_keys.add(key)
         self._directive_edit_buffers.setdefault(key, self._directive_source_text_from_buffer(directive))
         self.log_status(f"{directive.title()} opened in source edit mode.")
@@ -780,6 +800,56 @@ class FolioApp(App[None]):
         self.log_status(f"{directive.title()} edit cancelled; restored widget view.")
         self.reload_render_pane()
 
+    def open_directive_inserter(self, directive: Directive, position: str) -> None:
+        key = directive.instance_key()
+        self._source_view_keys.discard(key)
+        self._directive_edit_buffers.pop(key, None)
+        self._directive_insert_positions[key] = position
+        self._directive_insert_buffers.setdefault(key, "")
+        direction = "above" if position == "before" else "below"
+        self.log_status(f"Insert editor opened {direction} {directive.title()}.")
+        self.reload_render_pane()
+
+    def update_directive_insert_buffer(self, directive: Directive, position: str, new_text: str) -> None:
+        self._directive_insert_positions[directive.instance_key()] = position
+        self._directive_insert_buffers[directive.instance_key()] = new_text
+
+    def save_directive_insert(self, directive: Directive, position: str, new_text: str) -> None:
+        key = directive.instance_key()
+        if not new_text.strip():
+            self.log_status(f"{directive.title()} insert ignored because the buffer is empty.")
+            self.cancel_directive_insert(directive, position)
+            return
+
+        start_line = directive.start_line if position == "before" else directive.end_line + 1
+        mutation = TextMutation(
+            kind="append",
+            start_line=start_line,
+            end_line=start_line - 1,
+            new_text=new_text,
+            source="directive.insert",
+        )
+        self._directive_insert_positions.pop(key, None)
+        self._directive_insert_buffers.pop(key, None)
+        try:
+            self.mutations.apply(mutation)
+        except DocumentConflictError as exc:
+            self._active_conflict_message = str(exc)
+            self._directive_insert_positions[key] = position
+            self._directive_insert_buffers[key] = new_text
+            self.log_status(str(exc), error=True)
+            self.reload_document()
+            return
+
+        self.log_status(f"Inserted text {('above' if position == 'before' else 'below')} {directive.title()}.")
+        self.reload_document()
+
+    def cancel_directive_insert(self, directive: Directive, position: str) -> None:
+        self._directive_insert_positions.pop(directive.instance_key(), None)
+        self._directive_insert_buffers.pop(directive.instance_key(), None)
+        self.log_status(f"{directive.title()} insert cancelled; restored widget view.")
+        self.reload_render_pane()
+
     def toggle_single_pane(self, advisory_id: str | None = None) -> None:
         if advisory_id is not None:
             self._dismissed_advisories.add(advisory_id)
@@ -812,6 +882,8 @@ class FolioApp(App[None]):
             directive_find=model.directive_index.find,
             directive_source_view=set(self._source_view_keys),
             directive_edit_buffers=dict(self._directive_edit_buffers),
+            directive_insert_positions=dict(self._directive_insert_positions),
+            directive_insert_buffers=dict(self._directive_insert_buffers),
             advisories=self._build_advisories(model),
             single_pane_mode=self._single_pane_mode,
             document_trusted=self._trusted_document,
@@ -823,6 +895,22 @@ class FolioApp(App[None]):
         if not widget_id.startswith(prefix):
             return None
         fragment = widget_id[len(prefix) :]
+        return self._directive_for_widget_fragment(fragment)
+
+    def _directive_and_position_for_insert_editor_id(self, widget_id: str) -> tuple[Directive, str] | None:
+        prefix = "directive-insert-"
+        if not widget_id.startswith(prefix):
+            return None
+        payload = widget_id[len(prefix) :]
+        fragment, _, position = payload.rpartition("-")
+        if not fragment or position not in {"before", "after"}:
+            return None
+        directive = self._directive_for_widget_fragment(fragment)
+        if directive is None:
+            return None
+        return directive, position
+
+    def _directive_for_widget_fragment(self, fragment: str) -> Directive | None:
         for directive in self.model.directives:
             if widget_id_fragment(directive.instance_key()) == fragment:
                 return directive
@@ -931,8 +1019,9 @@ class FolioApp(App[None]):
     def _build_advisories(self, model: DocumentModel) -> list[AdvisorySpec]:
         advisories: list[AdvisorySpec] = []
         line_count = len(model.text.splitlines())
+        directive_count = len(model.directives)
 
-        if line_count >= 40 and "document-size" not in self._dismissed_advisories:
+        if directive_count > 100 and "document-size" not in self._dismissed_advisories:
             actions = [AdvisoryAction("dismiss", "dismiss", "advisory.dismiss")]
             if not self._single_pane_mode:
                 actions.insert(0, AdvisoryAction("single-pane", "single pane", "ui.toggle_single_pane"))
@@ -941,7 +1030,7 @@ class FolioApp(App[None]):
                     id="document-size",
                     title="Large Document",
                     message=(
-                        f"This document has {line_count} lines ({len(model.directives)} directives). "
+                        f"This document has {line_count} lines ({directive_count} directives). "
                         "Use single-pane mode or directive source toggles to reduce visual load."
                     ),
                     actions=actions,

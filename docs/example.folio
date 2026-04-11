@@ -42,6 +42,6 @@ table(rows)
 
 ::table[q3-breakdown]{source="budget-check" sortable="true" editable="true"}
 
-::note[design-principles]{section="colours"}
+::note[docs/sample/design-principles.md]{section="colours"}
 
 ::file[docs/renderer-interface.md]{preview="text"}

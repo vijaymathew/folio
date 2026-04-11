@@ -307,6 +307,58 @@ def test_contact_directive_source_editor_escape_restores_widget_without_crashing
     asyncio.run(scenario())
 
 
+def test_directive_insert_after_ctrl_s_adds_text_to_document(tmp_path: Path) -> None:
+    source = EXAMPLE_DOC
+    doc = tmp_path / "example.folio"
+    shutil.copyfile(source, doc)
+    task_fragment = widget_id_fragment("task:call-finance")
+
+    async def scenario() -> None:
+        app = FolioApp(doc)
+        async with app.run_test(size=(140, 45)) as pilot:
+            await pilot.pause(0.2)
+            app.query_one(f"#directive-block-{task_fragment}").focus()
+            await pilot.press("i")
+            await pilot.pause(0.2)
+            editor = app.query_one(f"#directive-insert-{task_fragment}-after", TextArea)
+            editor.load_text("Inserted from widget view.")
+            await pilot.pause(0.2)
+            source_editor = app.query_one("#source-editor", TextArea)
+            assert "Inserted from widget view." not in source_editor.text
+            await pilot.press("ctrl+s")
+            await pilot.pause(0.3)
+            source_editor = app.query_one("#source-editor", TextArea)
+            assert "Inserted from widget view." in source_editor.text
+            assert not list(app.query(f"#directive-insert-{task_fragment}-after"))
+
+    asyncio.run(scenario())
+
+
+def test_directive_insert_before_escape_restores_widget_without_saving(tmp_path: Path) -> None:
+    source = EXAMPLE_DOC
+    doc = tmp_path / "example.folio"
+    shutil.copyfile(source, doc)
+    task_fragment = widget_id_fragment("task:call-finance")
+
+    async def scenario() -> None:
+        app = FolioApp(doc)
+        async with app.run_test(size=(140, 45)) as pilot:
+            await pilot.pause(0.2)
+            app.query_one(f"#directive-block-{task_fragment}").focus()
+            await pilot.press("I")
+            await pilot.pause(0.2)
+            editor = app.query_one(f"#directive-insert-{task_fragment}-before", TextArea)
+            editor.load_text("Unsaved inserted text.")
+            await pilot.pause(0.2)
+            await pilot.press("escape")
+            await pilot.pause(0.2)
+            source_editor = app.query_one("#source-editor", TextArea)
+            assert "Unsaved inserted text." not in source_editor.text
+            assert not list(app.query(f"#directive-insert-{task_fragment}-before"))
+
+    asyncio.run(scenario())
+
+
 def test_single_pane_mode_is_default_and_f6_switches_to_split_pane(tmp_path: Path) -> None:
     source = EXAMPLE_DOC
     doc = tmp_path / "example.folio"
@@ -335,7 +387,7 @@ def test_single_pane_mode_is_default_and_f6_switches_to_split_pane(tmp_path: Pat
 def test_large_document_shows_inline_advisory(tmp_path: Path) -> None:
     doc = tmp_path / "advisory.folio"
     blocks = []
-    for index in range(16):
+    for index in range(101):
         blocks.append(
             "\n".join(
                 [
@@ -364,7 +416,7 @@ def test_large_document_shows_inline_advisory(tmp_path: Path) -> None:
 def test_large_document_advisory_can_toggle_single_pane(tmp_path: Path) -> None:
     doc = tmp_path / "advisory-toggle.folio"
     blocks = []
-    for index in range(16):
+    for index in range(101):
         blocks.append(
             "\n".join(
                 [

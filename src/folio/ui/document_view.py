@@ -127,6 +127,10 @@ class DirectiveBlock(Vertical):
 
 class DirectiveSourceEditor(TextArea):
     COMPONENT_CLASSES = TextArea.COMPONENT_CLASSES
+    BINDINGS = [
+        Binding("ctrl+s", "save_source_edit", show=False),
+        Binding("escape", "cancel_source_edit", show=False),
+    ]
 
     def __init__(self, directive: Directive, source_text: str, key_fragment: str, ctx: RenderContext) -> None:
         super().__init__(
@@ -160,17 +164,15 @@ class DirectiveSourceEditor(TextArea):
             new_text=self.text,
         )
 
-    def on_key(self, event: events.Key) -> None:
+    def action_save_source_edit(self) -> None:
         if self.ctx.events is None:
             return
-        if event.key == "ctrl+s":
-            self.ctx.events.emit("directive.edit_save", directive=self.directive, new_text=self.text)
-            event.stop()
+        self.ctx.events.emit("directive.edit_save", directive=self.directive, new_text=self.text)
+
+    def action_cancel_source_edit(self) -> None:
+        if self.ctx.events is None:
             return
-        if event.key == "escape":
-            self.ctx.events.emit("directive.edit_cancel", directive=self.directive)
-            event.stop()
-            return
+        self.ctx.events.emit("directive.edit_cancel", directive=self.directive)
 
     def _sync_height(self, text: str) -> None:
         line_count = max(3, len(text.splitlines()) + 2)
@@ -178,6 +180,11 @@ class DirectiveSourceEditor(TextArea):
 
 
 class DirectiveSourceInput(Input):
+    BINDINGS = [
+        Binding("ctrl+s", "save_source_edit", show=False),
+        Binding("escape", "cancel_source_edit", show=False),
+    ]
+
     def __init__(self, directive: Directive, source_text: str, key_fragment: str, ctx: RenderContext) -> None:
         super().__init__(
             source_text,
@@ -199,17 +206,15 @@ class DirectiveSourceInput(Input):
             new_text=self.value,
         )
 
-    def on_key(self, event: events.Key) -> None:
+    def action_save_source_edit(self) -> None:
         if self.ctx.events is None:
             return
-        if event.key == "ctrl+s":
-            self.ctx.events.emit("directive.edit_save", directive=self.directive, new_text=self.value)
-            event.stop()
+        self.ctx.events.emit("directive.edit_save", directive=self.directive, new_text=self.value)
+
+    def action_cancel_source_edit(self) -> None:
+        if self.ctx.events is None:
             return
-        if event.key == "escape":
-            self.ctx.events.emit("directive.edit_cancel", directive=self.directive)
-            event.stop()
-            return
+        self.ctx.events.emit("directive.edit_cancel", directive=self.directive)
 
 
 class DirectiveInsertEditor(Widget):

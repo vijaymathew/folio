@@ -21,6 +21,9 @@ class Directive:
     def key(self) -> str:
         return self.id or str(self.start_line)
 
+    def instance_key(self) -> str:
+        return f"{self.type}:{self.key()}"
+
     def title(self) -> str:
         ident = f"[{self.id}]" if self.id else ""
         return f"::{self.type}{ident}"

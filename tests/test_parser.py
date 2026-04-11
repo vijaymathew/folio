@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 from folio.core.parser import DirectiveParser
+from conftest import EXAMPLE_DOC
 
 
 def test_parser_builds_directive_index_for_example_document() -> None:
-    text = Path("/home/vijay/Projects/folio/docs/example.folio").read_text()
+    text = EXAMPLE_DOC.read_text()
     model = DirectiveParser().parse(text)
 
     assert len(model.directives) == 10

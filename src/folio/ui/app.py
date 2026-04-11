@@ -7,7 +7,7 @@ from pathlib import Path
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import Button, Footer, Header, Static, TextArea
+from textual.widgets import Button, Footer, Header, Input, Static, TextArea
 
 from folio.core.events import EventBus
 from folio.core.contact_reader import ContactCard, ContactReader, ContactReaderError
@@ -20,7 +20,7 @@ from folio.core.sh_runner import ShRunner
 from folio.core.store import DocumentConflictError, DocumentStore
 from folio.core.web_reader import WebReader, resolve_web_url
 from folio.python.worker import PyWorker
-from folio.renderers.base import AdvisoryAction, AdvisorySpec, RenderContext
+from folio.renderers.base import AdvisoryAction, AdvisorySpec, RenderContext, widget_id_fragment
 from folio.renderers.contact import ContactRenderer
 from folio.renderers.email import EmailRenderer
 from folio.renderers.file import FileRenderer
@@ -275,6 +275,8 @@ class FolioApp(App[None]):
     .directive-container {
       height: auto;
       margin-bottom: 1;
+      padding: 0 1;
+      border: round transparent;
     }
     .directive-toolbar {
       height: auto;
@@ -284,6 +286,14 @@ class FolioApp(App[None]):
       width: 1fr;
       color: $text-muted;
     }
+    .directive-container:focus, .directive-container:focus-within {
+      border: round $primary;
+      background: $boost;
+    }
+    .directive-container:focus .directive-title, .directive-container:focus-within .directive-title {
+      color: $primary-lighten-2;
+      text-style: bold;
+    }
     .directive-toggle {
       width: 12;
     }
@@ -291,6 +301,35 @@ class FolioApp(App[None]):
       height: auto;
       border: round $surface-lighten-1;
       padding: 1;
+      background: $surface;
+      color: $text;
+    }
+    .directive-insert {
+      height: auto;
+      border: round $accent;
+      padding: 1;
+      margin: 1 0;
+      background: #ffffff;
+      color: #111111;
+    }
+    .directive-insert-container, .directive-insert-help {
+      height: auto;
+    }
+    .directive-insert-help {
+      color: $text-muted;
+      margin-top: 1;
+      margin-bottom: 1;
+    }
+    .directive-insert .text-area--cursor-line {
+      background: #f3f3f3;
+      color: #111111;
+    }
+    .directive-insert .text-area--placeholder {
+      color: #777777;
+    }
+    .directive-source-input {
+      width: 1fr;
+      margin-bottom: 1;
     }
     .advisory-widget {
       height: auto;
@@ -349,6 +388,9 @@ class FolioApp(App[None]):
         self._source_dirty = False
         self._single_pane_mode = True
         self._source_view_keys: set[str] = set()
+        self._directive_edit_buffers: dict[str, str] = {}
+        self._directive_insert_positions: dict[str, str] = {}
+        self._directive_insert_buffers: dict[str, str] = {}
         self._dismissed_advisories: set[str] = set()
         self._active_conflict_message: str | None = None
         self._pending_shell_confirmations: set[str] = set()
@@ -376,8 +418,14 @@ class FolioApp(App[None]):
         self.events.subscribe("email.select", self.select_email_message)
         self.events.subscribe("email.action", self.perform_email_action)
         self.events.subscribe("email.compose_save", self.save_email_compose)
-        self.events.subscribe("directive.toggle_view", self.toggle_directive_view)
-        self.events.subscribe("directive.source_edit", self.update_directive_source_buffer)
+        self.events.subscribe("directive.edit_open", self.open_directive_editor)
+        self.events.subscribe("directive.edit_buffer", self.update_directive_edit_buffer)
+        self.events.subscribe("directive.edit_save", self.save_directive_editor)
+        self.events.subscribe("directive.edit_cancel", self.cancel_directive_editor)
+        self.events.subscribe("directive.insert_open", self.open_directive_inserter)
+        self.events.subscribe("directive.insert_buffer", self.update_directive_insert_buffer)
+        self.events.subscribe("directive.insert_save", self.save_directive_insert)
+        self.events.subscribe("directive.insert_cancel", self.cancel_directive_insert)
         self.events.subscribe("web.reload", self.reload_web_directive)
         self.events.subscribe("ui.toggle_single_pane", self.toggle_single_pane)
         self.events.subscribe("advisory.dismiss", self.dismiss_advisory)
@@ -409,6 +457,20 @@ class FolioApp(App[None]):
         self.reload_document()
 
     def action_save_source(self) -> None:
+        focused = self.focused
+        if isinstance(focused, (TextArea, Input)) and (focused.id or "").startswith("directive-source-"):
+            directive = self._directive_for_source_editor_id(focused.id or "")
+            if directive is not None:
+                new_text = focused.text if isinstance(focused, TextArea) else focused.value
+                self.save_directive_editor(directive, new_text)
+                return
+        if focused is not None and (focused.id or "").startswith("directive-insert-"):
+            target = self._directive_and_position_for_insert_editor_id(focused.id or "")
+            if target is not None:
+                directive, position = target
+                new_text = getattr(focused, "text", getattr(focused, "value", ""))
+                self.save_directive_insert(directive, position, new_text)
+                return
         editor = self.query_one("#source-editor", TextArea)
         self._save_source_text(editor.text)
 
@@ -436,6 +498,8 @@ class FolioApp(App[None]):
 
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
         if event.text_area.id != "source-editor" or self._loading_source:
+            return
+        if event.text_area.text == self.model.text:
             return
         self._mark_source_dirty()
 
@@ -712,29 +776,99 @@ class FolioApp(App[None]):
         self.reload_document()
         return True
 
-    def toggle_directive_view(self, directive: Directive) -> None:
-        key = directive.key()
-        if key in self._source_view_keys:
-            self._source_view_keys.remove(key)
-            self.log_status(f"{directive.title()} switched to widget view.")
-        else:
-            self._source_view_keys.add(key)
-            self.log_status(f"{directive.title()} switched to source view.")
+    def open_directive_editor(self, directive: Directive) -> None:
+        key = directive.instance_key()
+        self._directive_insert_positions.pop(key, None)
+        self._directive_insert_buffers.pop(key, None)
+        self._source_view_keys.add(key)
+        self._directive_edit_buffers.setdefault(key, self._directive_source_text_from_buffer(directive))
+        self.log_status(f"{directive.title()} opened in source edit mode.")
         self.reload_render_pane()
 
-    def update_directive_source_buffer(self, directive: Directive, previous_text: str, new_text: str) -> None:
+    def update_directive_edit_buffer(self, directive: Directive, new_text: str) -> None:
+        self._directive_edit_buffers[directive.instance_key()] = new_text
+
+    def save_directive_editor(self, directive: Directive, new_text: str) -> None:
         editor = self.query_one("#source-editor", TextArea)
+        previous_text = self._directive_source_text_from_buffer(directive)
         updated_text = self._replace_directive_text(editor.text, directive, previous_text, new_text)
         if updated_text is None:
             self.log_status(
-                f"{directive.title()} source could not be synced into the main buffer. Save or reload before editing inline again.",
+                f"{directive.title()} source could not be saved. Reload before editing this block again.",
                 error=True,
             )
             return
-        if updated_text == editor.text:
+        try:
+            self.store.save(updated_text)
+        except DocumentConflictError as exc:
+            self._active_conflict_message = str(exc)
+            self._directive_edit_buffers[directive.instance_key()] = new_text
+            self.log_status(str(exc), error=True)
+            self.reload_render_pane()
             return
-        self._set_source_editor_text(updated_text)
-        self._mark_source_dirty()
+
+        self._directive_edit_buffers.pop(directive.instance_key(), None)
+        self._source_view_keys.discard(directive.instance_key())
+        self._source_dirty = False
+        self._set_source_title()
+        self.log_status(f"{directive.title()} saved and returned to widget view.")
+        self.reload_document()
+
+    def cancel_directive_editor(self, directive: Directive) -> None:
+        self._directive_edit_buffers.pop(directive.instance_key(), None)
+        self._source_view_keys.discard(directive.instance_key())
+        self.log_status(f"{directive.title()} edit cancelled; restored widget view.")
+        self.reload_render_pane()
+
+    def open_directive_inserter(self, directive: Directive, position: str) -> None:
+        key = directive.instance_key()
+        self._source_view_keys.discard(key)
+        self._directive_edit_buffers.pop(key, None)
+        self._directive_insert_positions[key] = position
+        self._directive_insert_buffers.setdefault(key, "")
+        direction = "above" if position == "before" else "below"
+        self.log_status(f"Insert editor opened {direction} {directive.title()}.")
+        self.reload_render_pane()
+
+    def update_directive_insert_buffer(self, directive: Directive, position: str, new_text: str) -> None:
+        self._directive_insert_positions[directive.instance_key()] = position
+        self._directive_insert_buffers[directive.instance_key()] = new_text
+
+    def save_directive_insert(self, directive: Directive, position: str, new_text: str) -> None:
+        key = directive.instance_key()
+        if not new_text.strip():
+            self.log_status(f"{directive.title()} insert ignored because the buffer is empty.")
+            self.cancel_directive_insert(directive, position)
+            return
+
+        start_line = directive.start_line if position == "before" else directive.end_line + 1
+        mutation = TextMutation(
+            kind="append",
+            start_line=start_line,
+            end_line=start_line - 1,
+            new_text=new_text,
+            source="directive.insert",
+        )
+        self._directive_insert_positions.pop(key, None)
+        self._directive_insert_buffers.pop(key, None)
+        try:
+            self.mutations.apply(mutation)
+        except DocumentConflictError as exc:
+            self._active_conflict_message = str(exc)
+            self._directive_insert_positions[key] = position
+            self._directive_insert_buffers[key] = new_text
+            self.log_status(str(exc), error=True)
+            self.reload_document()
+            return
+
+        self.log_status(f"Inserted text {('above' if position == 'before' else 'below')} {directive.title()}.")
+        self.reload_document()
+
+    def cancel_directive_insert(self, directive: Directive, position: str) -> None:
+        self._directive_insert_positions.pop(directive.instance_key(), None)
+        self._directive_insert_buffers.pop(directive.instance_key(), None)
+        self.log_status(f"{directive.title()} insert cancelled; restored widget view.")
+        self.reload_render_pane()
 
     def toggle_single_pane(self, advisory_id: str | None = None) -> None:
         if advisory_id is not None:
@@ -767,11 +901,47 @@ class FolioApp(App[None]):
             directives_by_id=model.directive_index.by_id,
             directive_find=model.directive_index.find,
             directive_source_view=set(self._source_view_keys),
+            directive_edit_buffers=dict(self._directive_edit_buffers),
+            directive_insert_positions=dict(self._directive_insert_positions),
+            directive_insert_buffers=dict(self._directive_insert_buffers),
             advisories=self._build_advisories(model),
             single_pane_mode=self._single_pane_mode,
             document_trusted=self._trusted_document,
             pending_shell_confirmations=set(self._pending_shell_confirmations),
         )
+
+    def _directive_for_source_editor_id(self, widget_id: str) -> Directive | None:
+        prefix = "directive-source-"
+        if not widget_id.startswith(prefix):
+            return None
+        fragment = widget_id[len(prefix) :]
+        return self._directive_for_widget_fragment(fragment)
+
+    def _directive_and_position_for_insert_editor_id(self, widget_id: str) -> tuple[Directive, str] | None:
+        prefix = "directive-insert-"
+        if not widget_id.startswith(prefix):
+            return None
+        payload = widget_id[len(prefix) :]
+        fragment, _, position = payload.rpartition("-")
+        if not fragment or position not in {"before", "after"}:
+            return None
+        directive = self._directive_for_widget_fragment(fragment)
+        if directive is None:
+            return None
+        return directive, position
+
+    def _directive_for_widget_fragment(self, fragment: str) -> Directive | None:
+        for directive in self.model.directives:
+            if widget_id_fragment(directive.instance_key()) == fragment:
+                return directive
+        return None
+
+    def _directive_source_text_from_buffer(self, directive: Directive) -> str:
+        editor = self.query_one("#source-editor", TextArea)
+        lines = editor.text.splitlines()
+        if directive.start_line <= directive.end_line and directive.end_line < len(lines):
+            return "\n".join(lines[directive.start_line : directive.end_line + 1])
+        return directive.header_line
 
     def select_email_message(self, directive: Directive, message_key: str) -> None:
         self.email_selection[directive.key()] = message_key
@@ -869,8 +1039,9 @@ class FolioApp(App[None]):
     def _build_advisories(self, model: DocumentModel) -> list[AdvisorySpec]:
         advisories: list[AdvisorySpec] = []
         line_count = len(model.text.splitlines())
+        directive_count = len(model.directives)
 
-        if line_count >= 40 and "document-size" not in self._dismissed_advisories:
+        if directive_count > 100 and "document-size" not in self._dismissed_advisories:
             actions = [AdvisoryAction("dismiss", "dismiss", "advisory.dismiss")]
             if not self._single_pane_mode:
                 actions.insert(0, AdvisoryAction("single-pane", "single pane", "ui.toggle_single_pane"))
@@ -879,7 +1050,7 @@ class FolioApp(App[None]):
                     id="document-size",
                     title="Large Document",
                     message=(
-                        f"This document has {line_count} lines ({len(model.directives)} directives). "
+                        f"This document has {line_count} lines ({directive_count} directives). "
                         "Use single-pane mode or directive source toggles to reduce visual load."
                     ),
                     actions=actions,

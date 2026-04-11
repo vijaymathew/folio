@@ -4,6 +4,7 @@ from pathlib import Path
 
 from folio.core.parser import DirectiveParser
 from folio.python.worker import PyWorker, _should_block_audit_event
+from conftest import EXAMPLE_DOC
 
 
 def _py_directives_from(path: Path):
@@ -13,7 +14,7 @@ def _py_directives_from(path: Path):
 
 
 def test_worker_runs_document_in_order_and_captures_table() -> None:
-    directives = _py_directives_from(Path("/home/vijay/Projects/folio/docs/example.folio"))
+    directives = _py_directives_from(EXAMPLE_DOC)
     results = PyWorker().run_document(directives, trigger_key="budget-check")
 
     assert results["q3-data"].status == "ok"
@@ -25,7 +26,7 @@ def test_worker_runs_document_in_order_and_captures_table() -> None:
 
 
 def test_worker_autorun_only_skips_manual_block() -> None:
-    directives = _py_directives_from(Path("/home/vijay/Projects/folio/docs/example.folio"))
+    directives = _py_directives_from(EXAMPLE_DOC)
     results = PyWorker().run_document(directives, autorun_only=True)
 
     assert results["q3-data"].status == "ok"

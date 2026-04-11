@@ -8,7 +8,7 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.containers import VerticalScroll
 from textual.widget import Widget
-from textual.widgets import Button, Static, TextArea
+from textual.widgets import Button, Input, Static, TextArea
 
 from folio.core.models import Directive, DocumentModel, ProseBlock
 from folio.core.registry import CapabilityRegistry
@@ -57,42 +57,60 @@ class AdvisoryWidget(Vertical):
 
 
 class DirectiveBlock(Vertical):
+    can_focus = True
+
     def __init__(self, directive: Directive, inner: Widget, source_text: str, show_source: bool, ctx: RenderContext) -> None:
-        super().__init__(classes="directive-container")
+        super().__init__(
+            id=f"directive-block-{widget_id_fragment(directive.instance_key())}",
+            classes="directive-container",
+        )
         self.directive = directive
         self.inner = inner
         self.source_text = source_text
         self.show_source = show_source
         self.ctx = ctx
-        self.key_fragment = widget_id_fragment(directive.key())
+        self.key_fragment = widget_id_fragment(directive.instance_key())
 
     def compose(self) -> ComposeResult:
-        mode_label = "Widget" if self.show_source else "Source"
         with Horizontal(classes="directive-toolbar"):
             yield Static(self.directive.title(), classes="directive-title", markup=False)
-            yield Button(
-                mode_label,
-                id=f"toggle-view-{self.key_fragment}",
-                classes="directive-toggle",
-                compact=True,
-            )
         if self.show_source:
-            yield DirectiveSourceEditor(
-                self.directive,
-                self.source_text,
-                self.key_fragment,
-                self.ctx,
-            )
+            if "\n" in self.source_text:
+                yield DirectiveSourceEditor(
+                    self.directive,
+                    self.source_text,
+                    self.key_fragment,
+                    self.ctx,
+                )
+            else:
+                yield DirectiveSourceInput(
+                    self.directive,
+                    self.source_text,
+                    self.key_fragment,
+                    self.ctx,
+                )
         else:
             yield self.inner
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == f"toggle-view-{self.key_fragment}" and self.ctx.events is not None:
-            self.ctx.events.emit("directive.toggle_view", directive=self.directive)
+    def on_key(self, event: events.Key) -> None:
+        if self.show_source or self.ctx.events is None:
+            return
+        if event.key in {"enter", "e"}:
+            self.ctx.events.emit("directive.edit_open", directive=self.directive)
+            event.stop()
+
+    def on_click(self, event: events.Click) -> None:
+        self.focus()
+        if self.show_source or self.ctx.events is None:
+            return
+        if getattr(event, "chain", 1) >= 2:
+            self.ctx.events.emit("directive.edit_open", directive=self.directive)
             event.stop()
 
 
 class DirectiveSourceEditor(TextArea):
+    COMPONENT_CLASSES = TextArea.COMPONENT_CLASSES
+
     def __init__(self, directive: Directive, source_text: str, key_fragment: str, ctx: RenderContext) -> None:
         super().__init__(
             source_text,
@@ -109,6 +127,7 @@ class DirectiveSourceEditor(TextArea):
 
     def on_mount(self) -> None:
         self._sync_height(self.text)
+        self.focus()
 
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
         if event.text_area is not self:
@@ -116,18 +135,63 @@ class DirectiveSourceEditor(TextArea):
         self._sync_height(self.text)
         if self.ctx.events is None or self.text == self._last_synced_text:
             return
-        previous_text = self._last_synced_text
         self._last_synced_text = self.text
         self.ctx.events.emit(
-            "directive.source_edit",
+            "directive.edit_buffer",
             directive=self.directive,
-            previous_text=previous_text,
             new_text=self.text,
         )
+
+    def on_key(self, event: events.Key) -> None:
+        if self.ctx.events is None:
+            return
+        if event.key == "ctrl+s":
+            self.ctx.events.emit("directive.edit_save", directive=self.directive, new_text=self.text)
+            event.stop()
+            return
+        if event.key == "escape":
+            self.ctx.events.emit("directive.edit_cancel", directive=self.directive)
+            event.stop()
+            return
 
     def _sync_height(self, text: str) -> None:
         line_count = max(3, len(text.splitlines()) + 2)
         self.styles.height = line_count
+
+
+class DirectiveSourceInput(Input):
+    def __init__(self, directive: Directive, source_text: str, key_fragment: str, ctx: RenderContext) -> None:
+        super().__init__(
+            source_text,
+            id=f"directive-source-{key_fragment}",
+            classes="directive-source-input",
+        )
+        self.directive = directive
+        self.ctx = ctx
+
+    def on_mount(self) -> None:
+        self.focus()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input is not self or self.ctx.events is None:
+            return
+        self.ctx.events.emit(
+            "directive.edit_buffer",
+            directive=self.directive,
+            new_text=self.value,
+        )
+
+    def on_key(self, event: events.Key) -> None:
+        if self.ctx.events is None:
+            return
+        if event.key == "ctrl+s":
+            self.ctx.events.emit("directive.edit_save", directive=self.directive, new_text=self.value)
+            event.stop()
+            return
+        if event.key == "escape":
+            self.ctx.events.emit("directive.edit_cancel", directive=self.directive)
+            event.stop()
+            return
 
 
 class DocumentView(VerticalScroll):
@@ -281,7 +345,7 @@ class DocumentView(VerticalScroll):
 
     def _estimate_directive_height(self, directive: Directive, ctx: RenderContext) -> int:
         source_lines = max(1, len(self._directive_source_text(directive).splitlines()) or 1)
-        if directive.key() in (ctx.directive_source_view or set()):
+        if directive.instance_key() in (ctx.directive_source_view or set()):
             return source_lines + 3
 
         if directive.type == "task":
@@ -380,13 +444,16 @@ class DocumentView(VerticalScroll):
                 directive=directive,
                 inner=inner,
                 source_text=source_text,
-                show_source=directive.key() in (display_ctx.directive_source_view or set()),
+                show_source=directive.instance_key() in (display_ctx.directive_source_view or set()),
                 ctx=display_ctx,
             )
 
         return build
 
     def _directive_source_text(self, directive: Directive) -> str:
+        edit_buffers = getattr(self, "_current_edit_buffers", None)
+        if edit_buffers and directive.instance_key() in edit_buffers:
+            return edit_buffers[directive.instance_key()]
         lines = getattr(self, "_source_lines", None)
         if lines is None:
             return directive.header_line

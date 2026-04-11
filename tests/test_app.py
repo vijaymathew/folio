@@ -6,6 +6,7 @@ import shutil
 from email.message import EmailMessage
 from pathlib import Path
 
+from conftest import EXAMPLE_DOC
 from folio.core.models import ShRunResult, WebLink, WebPageResult
 from folio.renderers.contact import ContactWidget
 from folio.renderers.email import EmailComposeWidget, EmailWidget
@@ -55,7 +56,7 @@ def _seed_maildir(path: Path) -> None:
 
 
 def test_task_checkbox_click_rewrites_source(tmp_path: Path) -> None:
-    source = Path("/home/vijay/Projects/folio/docs/example.folio")
+    source = EXAMPLE_DOC
     doc = tmp_path / "example.folio"
     shutil.copyfile(source, doc)
 
@@ -74,7 +75,7 @@ def test_task_checkbox_click_rewrites_source(tmp_path: Path) -> None:
 
 
 def test_run_py_materializes_live_table_widget(tmp_path: Path) -> None:
-    source = Path("/home/vijay/Projects/folio/docs/example.folio")
+    source = EXAMPLE_DOC
     doc = tmp_path / "example.folio"
     shutil.copyfile(source, doc)
 
@@ -91,7 +92,7 @@ def test_run_py_materializes_live_table_widget(tmp_path: Path) -> None:
 
 
 def test_table_edit_updates_document_text(tmp_path: Path) -> None:
-    source = Path("/home/vijay/Projects/folio/docs/example.folio")
+    source = EXAMPLE_DOC
     doc = tmp_path / "example.folio"
     shutil.copyfile(source, doc)
 
@@ -151,53 +152,94 @@ def test_render_pane_only_mounts_visible_window(tmp_path: Path) -> None:
     asyncio.run(scenario())
 
 
-def test_directive_can_toggle_between_widget_and_source_view(tmp_path: Path) -> None:
-    source = Path("/home/vijay/Projects/folio/docs/example.folio")
+def test_directive_enter_opens_source_editor(tmp_path: Path) -> None:
+    source = EXAMPLE_DOC
     doc = tmp_path / "example.folio"
     shutil.copyfile(source, doc)
+    task_fragment = widget_id_fragment("task:call-finance")
 
     async def scenario() -> None:
         app = FolioApp(doc)
         async with app.run_test(size=(140, 45)) as pilot:
             await pilot.pause(0.2)
-            assert list(app.query("#toggle-call-finance"))
-            await pilot.click("#toggle-view-call-finance")
+            app.query_one(f"#directive-block-{task_fragment}").focus()
+            await pilot.press("enter")
             await pilot.pause(0.2)
-            assert not list(app.query("#toggle-call-finance"))
-            assert app.query_one("#directive-source-call-finance", TextArea)
+            assert not list(app.query("#toggle-view-call-finance"))
+            assert app.query_one(f"#directive-source-{task_fragment}", TextArea)
 
     asyncio.run(scenario())
 
 
-def test_inline_directive_source_editor_updates_main_source_buffer(tmp_path: Path) -> None:
-    source = Path("/home/vijay/Projects/folio/docs/example.folio")
+def test_inline_directive_source_editor_ctrl_s_saves_and_restores_widget(tmp_path: Path) -> None:
+    source = EXAMPLE_DOC
     doc = tmp_path / "example.folio"
     shutil.copyfile(source, doc)
+    task_fragment = widget_id_fragment("task:call-finance")
 
     async def scenario() -> None:
         app = FolioApp(doc)
         async with app.run_test(size=(140, 45)) as pilot:
             await pilot.pause(0.2)
-            app.query_one("#toggle-view-call-finance", Button).press()
+            app.query_one(f"#directive-block-{task_fragment}").focus()
+            await pilot.press("enter")
             await pilot.pause(0.2)
 
-            inline_editor = app.query_one("#directive-source-call-finance", TextArea)
+            inline_editor = app.query_one(f"#directive-source-{task_fragment}", TextArea)
             updated_text = inline_editor.text.replace('done="false"', 'done="true"', 1)
             inline_editor.load_text(updated_text)
             await pilot.pause(0.2)
 
             source_editor = app.query_one("#source-editor", TextArea)
+            assert updated_text not in source_editor.text
+
+            await pilot.press("ctrl+s")
+            await pilot.pause(0.3)
+
+            source_editor = app.query_one("#source-editor", TextArea)
             assert updated_text in source_editor.text
-            assert app._source_dirty is True
+            assert app._source_dirty is False
+            assert not list(app.query(f"#directive-source-{task_fragment}"))
+            assert list(app.query("#toggle-call-finance"))
+
+    asyncio.run(scenario())
+
+
+def test_inline_directive_source_editor_escape_cancels_and_restores_widget(tmp_path: Path) -> None:
+    source = EXAMPLE_DOC
+    doc = tmp_path / "example.folio"
+    shutil.copyfile(source, doc)
+    task_fragment = widget_id_fragment("task:call-finance")
+
+    async def scenario() -> None:
+        app = FolioApp(doc)
+        async with app.run_test(size=(140, 45)) as pilot:
+            await pilot.pause(0.2)
+            app.query_one(f"#directive-block-{task_fragment}").focus()
+            await pilot.press("enter")
+            await pilot.pause(0.2)
+
+            inline_editor = app.query_one(f"#directive-source-{task_fragment}", TextArea)
+            updated_text = inline_editor.text.replace('done="false"', 'done="true"', 1)
+            inline_editor.load_text(updated_text)
+            await pilot.pause(0.2)
+            await pilot.press("escape")
+            await pilot.pause(0.2)
+
+            source_editor = app.query_one("#source-editor", TextArea)
+            assert updated_text not in source_editor.text
+            assert app._source_dirty is False
+            assert not list(app.query(f"#directive-source-{task_fragment}"))
+            assert list(app.query("#toggle-call-finance"))
 
     asyncio.run(scenario())
 
 
 def test_file_directive_toggle_uses_safe_widget_ids(tmp_path: Path) -> None:
-    source = Path("/home/vijay/Projects/folio/docs/example.folio")
+    source = EXAMPLE_DOC
     doc = tmp_path / "example.folio"
     shutil.copyfile(source, doc)
-    key_fragment = widget_id_fragment("docs/renderer-interface.md")
+    key_fragment = widget_id_fragment("file:docs/renderer-interface.md")
 
     async def scenario() -> None:
         app = FolioApp(doc)
@@ -206,16 +248,67 @@ def test_file_directive_toggle_uses_safe_widget_ids(tmp_path: Path) -> None:
             render = app.query_one("#render-pane", DocumentView)
             render.scroll_end(animate=False)
             await pilot.pause(0.3)
-            assert list(app.query(f"#toggle-view-{key_fragment}"))
-            app.query_one(f"#toggle-view-{key_fragment}", Button).press()
+            app.query_one(f"#directive-block-{key_fragment}").focus()
+            await pilot.press("enter")
             await pilot.pause(0.2)
             assert list(app.query(f"#directive-source-{key_fragment}"))
 
     asyncio.run(scenario())
 
 
+def test_inline_directive_source_editor_e_opens_and_escape_restores_widget(tmp_path: Path) -> None:
+    source = EXAMPLE_DOC
+    doc = tmp_path / "example.folio"
+    shutil.copyfile(source, doc)
+    task_fragment = widget_id_fragment("task:call-finance")
+
+    async def scenario() -> None:
+        app = FolioApp(doc)
+        async with app.run_test(size=(140, 45)) as pilot:
+            await pilot.pause(0.2)
+            app.query_one(f"#directive-block-{task_fragment}").focus()
+            await pilot.press("e")
+            await pilot.pause(0.2)
+            assert app.query_one(f"#directive-source-{task_fragment}", TextArea)
+            await pilot.press("escape")
+            await pilot.pause(0.2)
+            assert not list(app.query(f"#directive-source-{task_fragment}"))
+            assert list(app.query("#toggle-call-finance"))
+
+    asyncio.run(scenario())
+
+
+def test_contact_directive_source_editor_escape_restores_widget_without_crashing(tmp_path: Path) -> None:
+    source = EXAMPLE_DOC
+    doc = tmp_path / "example.folio"
+    shutil.copyfile(source, doc)
+    contact_fragment = widget_id_fragment("contact:docs/sample/contacts")
+
+    async def scenario() -> None:
+        app = FolioApp(doc)
+        async with app.run_test(size=(140, 45)) as pilot:
+            await pilot.pause(0.2)
+            render = app.query_one("#render-pane", DocumentView)
+            render.scroll_to(y=10, animate=False)
+            await pilot.pause(0.2)
+            app.query_one(f"#directive-block-{contact_fragment}").focus()
+            await pilot.press("enter")
+            await pilot.pause(0.2)
+            editor = app.query_one(f"#directive-source-{contact_fragment}", Input)
+            assert editor.value == '::contact[docs/sample/contacts]{limit="6"}'
+            editor.value = '::contact[docs/sample/contacts]{limit="3"}'
+            await pilot.pause(0.1)
+            await pilot.press("escape")
+            await pilot.pause(0.2)
+            render.scroll_end(animate=False)
+            await pilot.pause(0.2)
+            assert not list(app.query(f"#directive-source-{contact_fragment}"))
+
+    asyncio.run(scenario())
+
+
 def test_single_pane_mode_is_default_and_f6_switches_to_split_pane(tmp_path: Path) -> None:
-    source = Path("/home/vijay/Projects/folio/docs/example.folio")
+    source = EXAMPLE_DOC
     doc = tmp_path / "example.folio"
     shutil.copyfile(source, doc)
 

@@ -7,7 +7,7 @@ from pathlib import Path
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import Button, Footer, Header, Static, TextArea
+from textual.widgets import Button, Footer, Header, Input, Static, TextArea
 
 from folio.core.events import EventBus
 from folio.core.contact_reader import ContactCard, ContactReader, ContactReaderError
@@ -20,7 +20,7 @@ from folio.core.sh_runner import ShRunner
 from folio.core.store import DocumentConflictError, DocumentStore
 from folio.core.web_reader import WebReader, resolve_web_url
 from folio.python.worker import PyWorker
-from folio.renderers.base import AdvisoryAction, AdvisorySpec, RenderContext
+from folio.renderers.base import AdvisoryAction, AdvisorySpec, RenderContext, widget_id_fragment
 from folio.renderers.contact import ContactRenderer
 from folio.renderers.email import EmailRenderer
 from folio.renderers.file import FileRenderer
@@ -292,6 +292,10 @@ class FolioApp(App[None]):
       border: round $surface-lighten-1;
       padding: 1;
     }
+    .directive-source-input {
+      width: 1fr;
+      margin-bottom: 1;
+    }
     .advisory-widget {
       height: auto;
       border: round $surface-lighten-1;
@@ -349,6 +353,7 @@ class FolioApp(App[None]):
         self._source_dirty = False
         self._single_pane_mode = True
         self._source_view_keys: set[str] = set()
+        self._directive_edit_buffers: dict[str, str] = {}
         self._dismissed_advisories: set[str] = set()
         self._active_conflict_message: str | None = None
         self._pending_shell_confirmations: set[str] = set()
@@ -376,8 +381,10 @@ class FolioApp(App[None]):
         self.events.subscribe("email.select", self.select_email_message)
         self.events.subscribe("email.action", self.perform_email_action)
         self.events.subscribe("email.compose_save", self.save_email_compose)
-        self.events.subscribe("directive.toggle_view", self.toggle_directive_view)
-        self.events.subscribe("directive.source_edit", self.update_directive_source_buffer)
+        self.events.subscribe("directive.edit_open", self.open_directive_editor)
+        self.events.subscribe("directive.edit_buffer", self.update_directive_edit_buffer)
+        self.events.subscribe("directive.edit_save", self.save_directive_editor)
+        self.events.subscribe("directive.edit_cancel", self.cancel_directive_editor)
         self.events.subscribe("web.reload", self.reload_web_directive)
         self.events.subscribe("ui.toggle_single_pane", self.toggle_single_pane)
         self.events.subscribe("advisory.dismiss", self.dismiss_advisory)
@@ -409,6 +416,13 @@ class FolioApp(App[None]):
         self.reload_document()
 
     def action_save_source(self) -> None:
+        focused = self.focused
+        if isinstance(focused, (TextArea, Input)) and (focused.id or "").startswith("directive-source-"):
+            directive = self._directive_for_source_editor_id(focused.id or "")
+            if directive is not None:
+                new_text = focused.text if isinstance(focused, TextArea) else focused.value
+                self.save_directive_editor(directive, new_text)
+                return
         editor = self.query_one("#source-editor", TextArea)
         self._save_source_text(editor.text)
 
@@ -436,6 +450,8 @@ class FolioApp(App[None]):
 
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
         if event.text_area.id != "source-editor" or self._loading_source:
+            return
+        if event.text_area.text == self.model.text:
             return
         self._mark_source_dirty()
 
@@ -712,29 +728,47 @@ class FolioApp(App[None]):
         self.reload_document()
         return True
 
-    def toggle_directive_view(self, directive: Directive) -> None:
-        key = directive.key()
-        if key in self._source_view_keys:
-            self._source_view_keys.remove(key)
-            self.log_status(f"{directive.title()} switched to widget view.")
-        else:
-            self._source_view_keys.add(key)
-            self.log_status(f"{directive.title()} switched to source view.")
+    def open_directive_editor(self, directive: Directive) -> None:
+        key = directive.instance_key()
+        self._source_view_keys.add(key)
+        self._directive_edit_buffers.setdefault(key, self._directive_source_text_from_buffer(directive))
+        self.log_status(f"{directive.title()} opened in source edit mode.")
         self.reload_render_pane()
 
-    def update_directive_source_buffer(self, directive: Directive, previous_text: str, new_text: str) -> None:
+    def update_directive_edit_buffer(self, directive: Directive, new_text: str) -> None:
+        self._directive_edit_buffers[directive.instance_key()] = new_text
+
+    def save_directive_editor(self, directive: Directive, new_text: str) -> None:
         editor = self.query_one("#source-editor", TextArea)
+        previous_text = self._directive_source_text_from_buffer(directive)
         updated_text = self._replace_directive_text(editor.text, directive, previous_text, new_text)
         if updated_text is None:
             self.log_status(
-                f"{directive.title()} source could not be synced into the main buffer. Save or reload before editing inline again.",
+                f"{directive.title()} source could not be saved. Reload before editing this block again.",
                 error=True,
             )
             return
-        if updated_text == editor.text:
+        try:
+            self.store.save(updated_text)
+        except DocumentConflictError as exc:
+            self._active_conflict_message = str(exc)
+            self._directive_edit_buffers[directive.instance_key()] = new_text
+            self.log_status(str(exc), error=True)
+            self.reload_render_pane()
             return
-        self._set_source_editor_text(updated_text)
-        self._mark_source_dirty()
+
+        self._directive_edit_buffers.pop(directive.instance_key(), None)
+        self._source_view_keys.discard(directive.instance_key())
+        self._source_dirty = False
+        self._set_source_title()
+        self.log_status(f"{directive.title()} saved and returned to widget view.")
+        self.reload_document()
+
+    def cancel_directive_editor(self, directive: Directive) -> None:
+        self._directive_edit_buffers.pop(directive.instance_key(), None)
+        self._source_view_keys.discard(directive.instance_key())
+        self.log_status(f"{directive.title()} edit cancelled; restored widget view.")
+        self.reload_render_pane()
 
     def toggle_single_pane(self, advisory_id: str | None = None) -> None:
         if advisory_id is not None:
@@ -767,11 +801,29 @@ class FolioApp(App[None]):
             directives_by_id=model.directive_index.by_id,
             directive_find=model.directive_index.find,
             directive_source_view=set(self._source_view_keys),
+            directive_edit_buffers=dict(self._directive_edit_buffers),
             advisories=self._build_advisories(model),
             single_pane_mode=self._single_pane_mode,
             document_trusted=self._trusted_document,
             pending_shell_confirmations=set(self._pending_shell_confirmations),
         )
+
+    def _directive_for_source_editor_id(self, widget_id: str) -> Directive | None:
+        prefix = "directive-source-"
+        if not widget_id.startswith(prefix):
+            return None
+        fragment = widget_id[len(prefix) :]
+        for directive in self.model.directives:
+            if widget_id_fragment(directive.instance_key()) == fragment:
+                return directive
+        return None
+
+    def _directive_source_text_from_buffer(self, directive: Directive) -> str:
+        editor = self.query_one("#source-editor", TextArea)
+        lines = editor.text.splitlines()
+        if directive.start_line <= directive.end_line and directive.end_line < len(lines):
+            return "\n".join(lines[directive.start_line : directive.end_line + 1])
+        return directive.header_line
 
     def select_email_message(self, directive: Directive, message_key: str) -> None:
         self.email_selection[directive.key()] = message_key

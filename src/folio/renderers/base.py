@@ -96,6 +96,7 @@ class RenderContext:
     directives_by_id: dict[str, Directive] | None = None
     directive_find: Callable[[str, str], Directive | None] | None = None
     directive_source_view: set[str] | None = None
+    directive_edit_buffers: dict[str, str] | None = None
     advisories: list[AdvisorySpec] | None = None
     single_pane_mode: bool = False
     document_trusted: bool = True

@@ -326,12 +326,18 @@ def test_contact_directive_source_editor_escape_restores_widget_without_crashing
             render = app.query_one("#render-pane", DocumentView)
             render.scroll_to(y=10, animate=False)
             await pilot.pause(0.2)
-            app.query_one(f"#directive-block-{contact_fragment}").focus()
-            await pilot.press("enter")
-            await pilot.pause(0.2)
-            editor = app.query_one(f"#directive-source-{contact_fragment}", Input)
-            assert editor.value == '::contact[docs/sample/contacts]{limit="6"}'
-            editor.value = '::contact[docs/sample/contacts]{limit="3"}'
+            directive = app.model.directive_index.find("contact", "docs/sample/contacts")
+            assert directive is not None
+            app.open_directive_editor(directive)
+            await pilot.pause(0.3)
+            editor = app.query_one(f"#directive-source-{contact_fragment}")
+            if isinstance(editor, Input):
+                assert editor.value == '::contact[docs/sample/contacts]{limit="6"}'
+                editor.value = '::contact[docs/sample/contacts]{limit="3"}'
+            else:
+                assert isinstance(editor, TextArea)
+                assert editor.text == '::contact[docs/sample/contacts]{limit="6"}'
+                editor.load_text('::contact[docs/sample/contacts]{limit="3"}')
             await pilot.pause(0.1)
             await pilot.press("escape")
             await pilot.pause(0.2)

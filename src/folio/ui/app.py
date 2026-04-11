@@ -301,12 +301,31 @@ class FolioApp(App[None]):
       height: auto;
       border: round $surface-lighten-1;
       padding: 1;
+      background: $surface;
+      color: $text;
     }
     .directive-insert {
       height: auto;
       border: round $accent;
       padding: 1;
       margin: 1 0;
+      background: #ffffff;
+      color: #111111;
+    }
+    .directive-insert-container, .directive-insert-help {
+      height: auto;
+    }
+    .directive-insert-help {
+      color: $text-muted;
+      margin-top: 1;
+      margin-bottom: 1;
+    }
+    .directive-insert .text-area--cursor-line {
+      background: #f3f3f3;
+      color: #111111;
+    }
+    .directive-insert .text-area--placeholder {
+      color: #777777;
     }
     .directive-source-input {
       width: 1fr;
@@ -445,11 +464,12 @@ class FolioApp(App[None]):
                 new_text = focused.text if isinstance(focused, TextArea) else focused.value
                 self.save_directive_editor(directive, new_text)
                 return
-        if isinstance(focused, TextArea) and (focused.id or "").startswith("directive-insert-"):
+        if focused is not None and (focused.id or "").startswith("directive-insert-"):
             target = self._directive_and_position_for_insert_editor_id(focused.id or "")
             if target is not None:
                 directive, position = target
-                self.save_directive_insert(directive, position, focused.text)
+                new_text = getattr(focused, "text", getattr(focused, "value", ""))
+                self.save_directive_insert(directive, position, new_text)
                 return
         editor = self.query_one("#source-editor", TextArea)
         self._save_source_text(editor.text)

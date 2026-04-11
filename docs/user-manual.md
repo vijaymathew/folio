@@ -28,18 +28,20 @@ Folio has two main panes:
 - source pane: the raw `.folio` text
 - render pane: widgets generated from `::` directives
 
-Default startup is single-pane widget view. Press `F6` to switch between single-pane and split-pane.
+Default startup is single-pane widget view. Press `F6` to switch between single-pane and split-pane. If you want to add new plain text or new directives, switch to split view with `F6` and edit the source pane.
 
 Keyboard controls:
 
 - `q`: quit
 - `r`: reload the document from disk
-- `Ctrl+S`: save the source buffer, reparse, and rerender
+- `Ctrl+S`: save the current source buffer or inline directive edit, then reparse and rerender
 - `F6`: toggle split-pane / single-pane
 
 Common interactions:
 
-- click `Source` / `Widget` on a directive to switch that block between raw text and rendered form
+- focus a directive and press `Enter` or `e` to edit that directive's source inline
+- press `Ctrl+S` to save an inline directive edit
+- press `Esc` to cancel an inline directive edit and restore the widget
 - click a task checkbox to toggle completion
 - click `Run` on `::py` and `::sh`
 - use arrow keys plus typing / `Enter` to edit `::table`
@@ -173,7 +175,7 @@ Purpose:
 Example:
 
 ```text
-::note[design-principles]{section="colours"}
+::note[docs/sample/design-principles.md]{section="colours"}
 ```
 
 Common params:
@@ -389,17 +391,18 @@ Examples:
 
 Absolute paths also work if they stay inside Folio’s allowed file-access roots.
 
-## Inline Source Toggle
+## Inline Directive Editing
 
-Every rendered directive can be switched back to raw source with the `Source` button.
+Existing rendered directives can be edited inline from widget view.
 
-The inline source editor:
+How to use it:
 
-- edits the real document buffer
-- marks the document dirty immediately
-- does not live-reparse as you type
+- focus a directive and press `Enter` or `e`
+- edit the directive source inline
+- press `Ctrl+S` to save, reparse, and restore the widget
+- press `Esc` to cancel the edit session and restore the current widget view
 
-Press `Ctrl+S` to save, reparse, and rerender.
+If you want to add new plain text or new directives, switch to split view with `F6` and edit the source pane directly.
 
 ## Safety Notes
 

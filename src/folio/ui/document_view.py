@@ -3,8 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 
+from rich.text import Text
 from textual import events
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.containers import VerticalScroll
 from textual.widget import Widget
@@ -65,8 +67,6 @@ class DirectiveBlock(Vertical):
         inner: Widget,
         source_text: str,
         show_source: bool,
-        insert_position: str | None,
-        insert_text: str,
         ctx: RenderContext,
     ) -> None:
         super().__init__(
@@ -77,14 +77,10 @@ class DirectiveBlock(Vertical):
         self.inner = inner
         self.source_text = source_text
         self.show_source = show_source
-        self.insert_position = insert_position
-        self.insert_text = insert_text
         self.ctx = ctx
         self.key_fragment = widget_id_fragment(directive.instance_key())
 
     def compose(self) -> ComposeResult:
-        if self.insert_position == "before":
-            yield DirectiveInsertEditor(self.directive, self.insert_position, self.insert_text, self.key_fragment, self.ctx)
         with Horizontal(classes="directive-toolbar"):
             yield Static(self.directive.title(), classes="directive-title", markup=False)
         if self.show_source:
@@ -104,8 +100,6 @@ class DirectiveBlock(Vertical):
                 )
         else:
             yield self.inner
-        if self.insert_position == "after":
-            yield DirectiveInsertEditor(self.directive, self.insert_position, self.insert_text, self.key_fragment, self.ctx)
 
     def on_key(self, event: events.Key) -> None:
         if self.show_source or self.ctx.events is None:
@@ -150,12 +144,13 @@ class DirectiveSourceEditor(TextArea):
 
     def on_mount(self) -> None:
         self._sync_height(self.text)
-        self.focus()
+        self.call_after_refresh(self.focus)
 
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
         if event.text_area is not self:
             return
         self._sync_height(self.text)
+        self.refresh(repaint=True)
         if self.ctx.events is None or self.text == self._last_synced_text:
             return
         self._last_synced_text = self.text
@@ -217,33 +212,137 @@ class DirectiveSourceInput(Input):
             return
 
 
-class DirectiveInsertEditor(TextArea):
-    COMPONENT_CLASSES = TextArea.COMPONENT_CLASSES
+class DirectiveInsertEditor(Widget):
+    can_focus = True
+    BINDINGS = [
+        Binding("ctrl+s", "save_insert", show=False),
+        Binding("escape", "cancel_insert", show=False),
+    ]
 
     def __init__(self, directive: Directive, position: str, source_text: str, key_fragment: str, ctx: RenderContext) -> None:
         super().__init__(
-            source_text,
             id=f"directive-insert-{key_fragment}-{position}",
             classes="directive-insert",
-            language="markdown",
-            soft_wrap=False,
-            show_line_numbers=False,
         )
         self.directive = directive
         self.position = position
         self.ctx = ctx
+        self.placeholder = "Type plain text or a ::directive block here."
         self.border_title = "Insert Above" if position == "before" else "Insert Below"
+        self.text = source_text
+        self.cursor = len(source_text)
         self._last_synced_text = source_text
         self._sync_height(source_text)
 
     def on_mount(self) -> None:
         self._sync_height(self.text)
-        self.focus()
+        self.call_after_refresh(self.focus)
 
-    def on_text_area_changed(self, event: TextArea.Changed) -> None:
-        if event.text_area is not self:
+    def render(self) -> Text:
+        if not self.text:
+            content = Text()
+            if self.has_focus:
+                content.append(" ", style="#ffffff on #000000")
+            content.append(self.placeholder, style="#666666 italic")
+            return content
+
+        before = self.text[: self.cursor]
+        after = self.text[self.cursor :]
+        content = Text(style="#000000 on #ffffff")
+        if self.has_focus:
+            if after:
+                content.append(before)
+                content.append(after[0], style="#ffffff on #000000")
+                content.append(after[1:])
+            else:
+                content.append(before)
+                content.append(" ", style="#ffffff on #000000")
+        else:
+            content.append(self.text)
+        return content
+
+    def on_focus(self) -> None:
+        self.refresh(repaint=True)
+
+    def on_blur(self) -> None:
+        self.refresh(repaint=True)
+
+    def on_paste(self, event: events.Paste) -> None:
+        self._insert_text(event.text)
+        event.stop()
+
+    def on_key(self, event: events.Key) -> None:
+        if event.key == "enter":
+            self._insert_text("\n")
+            event.stop()
             return
+        if event.key == "backspace":
+            self._backspace()
+            event.stop()
+            return
+        if event.key == "delete":
+            self._delete()
+            event.stop()
+            return
+        if event.key == "left":
+            self.cursor = max(0, self.cursor - 1)
+            self.refresh(repaint=True)
+            event.stop()
+            return
+        if event.key == "right":
+            self.cursor = min(len(self.text), self.cursor + 1)
+            self.refresh(repaint=True)
+            event.stop()
+            return
+        if event.key == "home":
+            self.cursor = 0
+            self.refresh(repaint=True)
+            event.stop()
+            return
+        if event.key == "end":
+            self.cursor = len(self.text)
+            self.refresh(repaint=True)
+            event.stop()
+            return
+        if event.is_printable and event.character:
+            self._insert_text(event.character)
+            event.stop()
+            return
+        if event.key in {"ctrl+s", "escape"}:
+            return
+
+    def _insert_text(self, new_text: str) -> None:
+        self.text = f"{self.text[:self.cursor]}{new_text}{self.text[self.cursor:]}"
+        self.cursor += len(new_text)
         self._sync_height(self.text)
+        self.refresh(repaint=True)
+        self._emit_buffer_if_changed()
+
+    def load_text(self, new_text: str) -> None:
+        self.text = new_text
+        self.cursor = len(new_text)
+        self._sync_height(self.text)
+        self.refresh(repaint=True)
+        self._emit_buffer_if_changed()
+
+    def _backspace(self) -> None:
+        if self.cursor == 0:
+            return
+        self.text = f"{self.text[: self.cursor - 1]}{self.text[self.cursor :]}"
+        self.cursor -= 1
+        self._sync_height(self.text)
+        self.refresh(repaint=True)
+        self._emit_buffer_if_changed()
+
+    def _delete(self) -> None:
+        if self.cursor >= len(self.text):
+            return
+        self.text = f"{self.text[:self.cursor]}{self.text[self.cursor + 1 :]}"
+        self._sync_height(self.text)
+        self.refresh(repaint=True)
+        self._emit_buffer_if_changed()
+
+    def _emit_buffer_if_changed(self) -> None:
         if self.ctx.events is None or self.text == self._last_synced_text:
             return
         self._last_synced_text = self.text
@@ -254,31 +353,56 @@ class DirectiveInsertEditor(TextArea):
             new_text=self.text,
         )
 
-    def on_key(self, event: events.Key) -> None:
+    def action_save_insert(self) -> None:
         if self.ctx.events is None:
             return
-        if event.key == "ctrl+s":
-            self.ctx.events.emit(
-                "directive.insert_save",
-                directive=self.directive,
-                position=self.position,
-                new_text=self.text,
-            )
-            event.stop()
+        self.ctx.events.emit(
+            "directive.insert_save",
+            directive=self.directive,
+            position=self.position,
+            new_text=self.text,
+        )
+
+    def action_cancel_insert(self) -> None:
+        if self.ctx.events is None:
             return
-        if event.key == "escape":
-            self.ctx.events.emit("directive.insert_cancel", directive=self.directive, position=self.position)
-            event.stop()
-            return
+        self.ctx.events.emit("directive.insert_cancel", directive=self.directive, position=self.position)
 
     def _sync_height(self, text: str) -> None:
         line_count = max(3, len(text.splitlines()) + 2)
         self.styles.height = line_count
 
 
+class DirectiveInsertWidget(Vertical):
+    def __init__(self, directive: Directive, position: str, source_text: str, key_fragment: str, ctx: RenderContext) -> None:
+        super().__init__(classes="directive-insert-container")
+        self.directive = directive
+        self.position = position
+        self.source_text = source_text
+        self.key_fragment = key_fragment
+        self.ctx = ctx
+
+    def compose(self) -> ComposeResult:
+        label = "Insert above this widget." if self.position == "before" else "Insert below this widget."
+        yield Static(
+            f"{label} Type plain text or a full ::directive block. Ctrl+S saves, Esc cancels.",
+            classes="directive-insert-help",
+            markup=False,
+        )
+        yield DirectiveInsertEditor(self.directive, self.position, self.source_text, self.key_fragment, self.ctx)
+
+    def on_mount(self) -> None:
+        def _focus_editor() -> None:
+            editor = self.query_one(DirectiveInsertEditor)
+            editor.focus()
+
+        self.call_after_refresh(_focus_editor)
+
+
 class DocumentView(VerticalScroll):
     VIEWPORT_MARGIN = 12
     TITLE_HEIGHT = 2
+    BOTTOM_WINDOW_BLOCKS = 12
 
     def __init__(self, *children: Widget, **kwargs) -> None:
         super().__init__(*children, **kwargs)
@@ -356,6 +480,11 @@ class DocumentView(VerticalScroll):
         target_bottom = visible_top + viewport_height + self.VIEWPORT_MARGIN
 
         total_height = sum(block.estimated_height for block in self._blocks)
+        if target_bottom >= total_height:
+            start_index = max(0, len(self._blocks) - self.BOTTOM_WINDOW_BLOCKS)
+            top_spacer = sum(block.estimated_height for block in self._blocks[:start_index])
+            return (start_index, len(self._blocks), top_spacer, 0)
+
         top_spacer = 0
         start_index = 0
 
@@ -409,6 +538,16 @@ class DocumentView(VerticalScroll):
                 prose_index += 1
 
             for directive in model.directive_index.directives_starting_at(line_no):
+                insert_position = (ctx.directive_insert_positions or {}).get(directive.instance_key())
+                if insert_position == "before":
+                    blocks.append(
+                        RenderBlock(
+                            start_line=directive.start_line,
+                            end_line=directive.start_line,
+                            estimated_height=self._insertion_height(directive, ctx),
+                            build_widget=self._insertion_widget_factory(directive, insert_position, ctx),
+                        )
+                    )
                 renderer = registry.create(directive.type)
                 renderer_ctx = registry.context_for(directive.type, ctx) if renderer is not None else ctx
                 blocks.append(
@@ -419,6 +558,15 @@ class DocumentView(VerticalScroll):
                         build_widget=self._widget_factory(directive, renderer, renderer_ctx, ctx),
                     )
                 )
+                if insert_position == "after":
+                    blocks.append(
+                        RenderBlock(
+                            start_line=directive.end_line,
+                            end_line=directive.end_line,
+                            estimated_height=self._insertion_height(directive, ctx),
+                            build_widget=self._insertion_widget_factory(directive, insert_position, ctx),
+                        )
+                    )
 
         return blocks
 
@@ -429,11 +577,11 @@ class DocumentView(VerticalScroll):
         source_lines = max(1, len(self._directive_source_text(directive).splitlines()) or 1)
         height = 0
         if directive.instance_key() in (ctx.directive_source_view or set()):
-            return source_lines + 3 + self._insertion_height(directive, ctx)
+            return source_lines + 3
 
         if directive.type == "task":
             height += max(source_lines, 4 + max(0, len(directive.body) - 1)) + 1
-            return height + self._insertion_height(directive, ctx)
+            return height
 
         if directive.type == "py":
             code_lines = max(1, len(directive.body) or 1)
@@ -448,46 +596,46 @@ class DocumentView(VerticalScroll):
             else:
                 output_lines = max(1, len((result.error or "").splitlines()) or 1)
             height += code_lines + output_lines + (1 if run_mode == "manual" else 0) + 4
-            return height + self._insertion_height(directive, ctx)
+            return height
 
         if directive.type == "sh":
             height += 4
-            return height + self._insertion_height(directive, ctx)
+            return height
 
         if directive.type == "sh-output":
             body_lines = max(1, len(directive.body) or 1)
             height += body_lines + 3
-            return height + self._insertion_height(directive, ctx)
+            return height
 
         if directive.type == "table":
             rows = self._table_row_count(directive, ctx)
             height += max(source_lines, rows + 5)
-            return height + self._insertion_height(directive, ctx)
+            return height
 
         if directive.type == "file":
             height += max(source_lines, self._preview_lines(directive) + 4)
-            return height + self._insertion_height(directive, ctx)
+            return height
 
         if directive.type == "contact":
             limit = self._limit_lines(directive, default=6)
             height += max(source_lines, 4 + (limit * 5))
-            return height + self._insertion_height(directive, ctx)
+            return height
 
         if directive.type == "email":
             if directive.id == "draft":
                 body_lines = max(6, len(directive.body) + 8)
                 height += max(source_lines, body_lines)
-                return height + self._insertion_height(directive, ctx)
+                return height
             limit = self._limit_lines(directive, default=20)
             height += max(source_lines, 12 + limit + 12)
-            return height + self._insertion_height(directive, ctx)
+            return height
 
         if directive.type == "note":
             height += max(source_lines, max(4, len(directive.body) + 4))
-            return height + self._insertion_height(directive, ctx)
+            return height
 
         height += max(source_lines, 4)
-        return height + self._insertion_height(directive, ctx)
+        return height
 
     def _insertion_height(self, directive: Directive, ctx: RenderContext) -> int:
         insert_positions = ctx.directive_insert_positions or {}
@@ -548,10 +696,28 @@ class DocumentView(VerticalScroll):
                 inner=inner,
                 source_text=source_text,
                 show_source=directive.instance_key() in (display_ctx.directive_source_view or set()),
-                insert_position=(display_ctx.directive_insert_positions or {}).get(directive.instance_key()),
-                insert_text=(display_ctx.directive_insert_buffers or {}).get(directive.instance_key(), ""),
                 ctx=display_ctx,
             )
+
+        return build
+
+    def _insertion_widget_factory(
+        self,
+        directive: Directive,
+        position: str,
+        display_ctx: RenderContext,
+    ) -> Callable[[], Widget]:
+        insert_text = (display_ctx.directive_insert_buffers or {}).get(directive.instance_key(), "")
+        key_fragment = widget_id_fragment(directive.instance_key())
+
+        def build(
+            directive: Directive = directive,
+            position: str = position,
+            insert_text: str = insert_text,
+            key_fragment: str = key_fragment,
+            display_ctx: RenderContext = display_ctx,
+        ) -> Widget:
+            return DirectiveInsertWidget(directive, position, insert_text, key_fragment, display_ctx)
 
         return build
 

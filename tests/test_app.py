@@ -12,7 +12,7 @@ from folio.renderers.contact import ContactWidget
 from folio.renderers.email import EmailComposeWidget, EmailWidget
 from folio.renderers.base import widget_id_fragment
 from folio.renderers.table import TableEditor
-from folio.ui.document_view import DocumentView
+from folio.ui.document_view import DirectiveInsertEditor, DocumentView
 from folio.ui.app import FolioApp
 from textual.widgets import Button, DataTable, Input, TextArea
 
@@ -148,6 +148,41 @@ def test_render_pane_only_mounts_visible_window(tmp_path: Path) -> None:
             assert len(scrolled_buttons) < 30
             assert list(app.query("#toggle-item-29"))
             assert not list(app.query("#toggle-item-0"))
+
+    asyncio.run(scenario())
+
+
+def test_scroll_end_keeps_tail_window_mounted_for_last_file_widget(tmp_path: Path) -> None:
+    preview_file = tmp_path / "tail.txt"
+    preview_file.write_text("\n".join(f"Line {index}" for index in range(40)), encoding="utf-8")
+    doc = tmp_path / "tail-window.folio"
+    blocks = []
+    for index in range(30):
+        blocks.append(
+            "\n".join(
+                [
+                    f'::task[item-{index}]{{done="false" due="soon"}}',
+                    f"Task {index}",
+                    "::end",
+                ]
+            )
+        )
+    blocks.append(f'::file[tail.txt]{{preview="text" lines="20"}}')
+    doc.write_text("\n\n".join(blocks), encoding="utf-8")
+    file_fragment = widget_id_fragment("file:tail.txt")
+
+    async def scenario() -> None:
+        app = FolioApp(doc)
+        async with app.run_test(size=(100, 18)) as pilot:
+            await pilot.pause(0.2)
+            render = app.query_one("#render-pane", DocumentView)
+            render.scroll_end(animate=False)
+            await pilot.pause(0.3)
+            assert list(app.query(f"#directive-block-{file_fragment}"))
+            first_scroll = render.scroll_y
+            await pilot.pause(0.3)
+            assert list(app.query(f"#directive-block-{file_fragment}"))
+            assert render.scroll_y >= first_scroll - 1
 
     asyncio.run(scenario())
 
@@ -320,7 +355,7 @@ def test_directive_insert_after_ctrl_s_adds_text_to_document(tmp_path: Path) -> 
             app.query_one(f"#directive-block-{task_fragment}").focus()
             await pilot.press("i")
             await pilot.pause(0.2)
-            editor = app.query_one(f"#directive-insert-{task_fragment}-after", TextArea)
+            editor = app.query_one(f"#directive-insert-{task_fragment}-after", DirectiveInsertEditor)
             editor.load_text("Inserted from widget view.")
             await pilot.pause(0.2)
             source_editor = app.query_one("#source-editor", TextArea)
@@ -347,7 +382,7 @@ def test_directive_insert_before_escape_restores_widget_without_saving(tmp_path:
             app.query_one(f"#directive-block-{task_fragment}").focus()
             await pilot.press("I")
             await pilot.pause(0.2)
-            editor = app.query_one(f"#directive-insert-{task_fragment}-before", TextArea)
+            editor = app.query_one(f"#directive-insert-{task_fragment}-before", DirectiveInsertEditor)
             editor.load_text("Unsaved inserted text.")
             await pilot.pause(0.2)
             await pilot.press("escape")
@@ -355,6 +390,28 @@ def test_directive_insert_before_escape_restores_widget_without_saving(tmp_path:
             source_editor = app.query_one("#source-editor", TextArea)
             assert "Unsaved inserted text." not in source_editor.text
             assert not list(app.query(f"#directive-insert-{task_fragment}-before"))
+
+    asyncio.run(scenario())
+
+
+def test_directive_insert_editor_accepts_typed_input(tmp_path: Path) -> None:
+    source = EXAMPLE_DOC
+    doc = tmp_path / "example.folio"
+    shutil.copyfile(source, doc)
+    task_fragment = widget_id_fragment("task:call-finance")
+
+    async def scenario() -> None:
+        app = FolioApp(doc)
+        async with app.run_test(size=(140, 45)) as pilot:
+            await pilot.pause(0.2)
+            app.query_one(f"#directive-block-{task_fragment}").focus()
+            await pilot.press("i")
+            await pilot.pause(0.3)
+            editor = app.query_one(f"#directive-insert-{task_fragment}-after", DirectiveInsertEditor)
+            assert app.focused is editor
+            await pilot.press("H", "i")
+            await pilot.pause(0.2)
+            assert "Hi" in editor.text
 
     asyncio.run(scenario())
 

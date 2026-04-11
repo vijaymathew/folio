@@ -4,9 +4,11 @@ import json
 from dataclasses import replace
 from pathlib import Path
 
+from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.document._document import Selection
 from textual.widgets import Button, Footer, Header, Input, Static, TextArea
 
 from folio.core.events import EventBus
@@ -54,6 +56,20 @@ class FolioApp(App[None]):
       border: round $surface;
       padding: 1 2;
       overflow: auto;
+    }
+    #source-find-bar {
+      height: auto;
+      display: none;
+      margin-bottom: 1;
+    }
+    #source-find-input {
+      width: 1fr;
+      margin-right: 1;
+    }
+    #source-find-status {
+      width: 18;
+      color: $text-muted;
+      content-align: right middle;
     }
     #source-editor {
       height: 1fr;
@@ -364,6 +380,11 @@ class FolioApp(App[None]):
         Binding("q", "quit", "Quit"),
         Binding("r", "reload_document", "Reload"),
         Binding("ctrl+s", "save_source", "Save"),
+        Binding("f8,ctrl+shift+f", "open_find", "Find"),
+        Binding("f3", "find_next", "Find Next"),
+        Binding("shift+f3", "find_previous", "Find Prev"),
+        Binding("ctrl+z", "undo_source", "Undo"),
+        Binding("ctrl+y", "redo_source", "Redo"),
         Binding("f6", "toggle_single_pane", "Split Pane", id=LAYOUT_BINDING_ID),
     ]
 
@@ -394,6 +415,9 @@ class FolioApp(App[None]):
         self._dismissed_advisories: set[str] = set()
         self._active_conflict_message: str | None = None
         self._pending_shell_confirmations: set[str] = set()
+        self._source_find_query = ""
+        self._source_find_matches: list[int] = []
+        self._source_find_index = -1
         self._subscribe_events()
         self._register_renderers()
 
@@ -436,6 +460,9 @@ class FolioApp(App[None]):
         with Horizontal(id="body"):
             with Vertical(id="source-pane"):
                 yield Static("Source", id="source-title", classes="pane-title")
+                with Horizontal(id="source-find-bar"):
+                    yield Input(placeholder="Find in source", id="source-find-input")
+                    yield Static("", id="source-find-status")
                 yield TextArea(
                     "",
                     id="source-editor",
@@ -455,6 +482,31 @@ class FolioApp(App[None]):
 
     def action_reload_document(self) -> None:
         self.reload_document()
+
+    def action_open_find(self) -> None:
+        if self._single_pane_mode:
+            self.toggle_single_pane()
+        self._show_source_find_bar()
+        find_input = self.query_one("#source-find-input", Input)
+        find_input.value = self._source_find_query
+        find_input.focus()
+        self._update_source_find_matches(find_input.value)
+
+    def action_find_next(self) -> None:
+        self._jump_source_find(forward=True)
+
+    def action_find_previous(self) -> None:
+        self._jump_source_find(forward=False)
+
+    def action_undo_source(self) -> None:
+        editor = self.query_one("#source-editor", TextArea)
+        editor.focus()
+        editor.action_undo()
+
+    def action_redo_source(self) -> None:
+        editor = self.query_one("#source-editor", TextArea)
+        editor.focus()
+        editor.action_redo()
 
     def action_save_source(self) -> None:
         focused = self.focused
@@ -502,6 +554,22 @@ class FolioApp(App[None]):
         if event.text_area.text == self.model.text:
             return
         self._mark_source_dirty()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id != "source-find-input":
+            return
+        self._update_source_find_matches(event.value)
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id != "source-find-input":
+            return
+        self.action_find_next()
+
+    def on_key(self, event: events.Key) -> None:
+        focused = self.focused
+        if isinstance(focused, Input) and focused.id == "source-find-input" and event.key == "escape":
+            self._close_source_find_bar()
+            event.stop()
 
     def _find_directive(self, directive_type: str, target: str) -> Directive | None:
         return self.model.directive_index.find(directive_type, target)
@@ -734,6 +802,117 @@ class FolioApp(App[None]):
     def _set_source_title(self) -> None:
         title = self.query_one("#source-title", Static)
         title.update("Source *" if self._source_dirty else "Source")
+
+    def _show_source_find_bar(self) -> None:
+        self.query_one("#source-find-bar", Horizontal).styles.display = "block"
+
+    def _close_source_find_bar(self) -> None:
+        self.query_one("#source-find-bar", Horizontal).styles.display = "none"
+        self.query_one("#source-find-status", Static).update("")
+        self.query_one("#source-editor", TextArea).focus()
+
+    def _update_source_find_matches(self, query: str) -> None:
+        self._source_find_query = query
+        status = self.query_one("#source-find-status", Static)
+        if not query:
+            self._source_find_matches = []
+            self._source_find_index = -1
+            status.update("")
+            return
+        text = self.query_one("#source-editor", TextArea).text
+        matches: list[int] = []
+        start = 0
+        while True:
+            index = text.find(query, start)
+            if index == -1:
+                break
+            matches.append(index)
+            start = index + 1
+        self._source_find_matches = matches
+        self._source_find_index = -1
+        if matches:
+            status.update(f"{len(matches)} matches")
+        else:
+            status.update("No matches")
+
+    def _jump_source_find(self, *, forward: bool) -> None:
+        if self._single_pane_mode:
+            self.toggle_single_pane()
+        self._show_source_find_bar()
+        find_input = self.query_one("#source-find-input", Input)
+        query = find_input.value
+        if not query:
+            find_input.focus()
+            self.log_status("Type a search term in the find bar.", error=True)
+            return
+        if query != self._source_find_query:
+            self._update_source_find_matches(query)
+        if not self._source_find_matches:
+            self.log_status(f"No matches for {query!r}.", error=True)
+            return
+        editor = self.query_one("#source-editor", TextArea)
+        current_offset = self._location_to_offset(editor.text, editor.selection.end if forward else editor.selection.start)
+        if forward:
+            next_index = next((i for i, offset in enumerate(self._source_find_matches) if offset >= current_offset), 0)
+            if self._source_find_index == next_index and self._source_find_index != -1:
+                next_index = (next_index + 1) % len(self._source_find_matches)
+        else:
+            next_index = next((i for i in range(len(self._source_find_matches) - 1, -1, -1) if self._source_find_matches[i] < current_offset), len(self._source_find_matches) - 1)
+            if self._source_find_index == next_index and self._source_find_index != -1:
+                next_index = (next_index - 1) % len(self._source_find_matches)
+        self._activate_source_find_match(next_index, query)
+
+    def _activate_source_find_match(self, match_index: int, query: str) -> None:
+        editor = self.query_one("#source-editor", TextArea)
+        match_offset = self._source_find_matches[match_index]
+        start = self._offset_to_location(editor.text, match_offset)
+        end = self._offset_to_location(editor.text, match_offset + len(query))
+        editor.selection = Selection(start, end)
+        editor.scroll_cursor_visible(center=True)
+        self._source_find_index = match_index
+        self.query_one("#source-find-status", Static).update(f"{match_index + 1}/{len(self._source_find_matches)}")
+
+    def _offset_to_location(self, text: str, offset: int) -> tuple[int, int]:
+        row = 0
+        column = 0
+        index = 0
+        limit = min(max(0, offset), len(text))
+        while index < limit:
+            char = text[index]
+            if char == "\r":
+                if index + 1 < limit and text[index + 1] == "\n":
+                    index += 1
+                row += 1
+                column = 0
+            elif char == "\n":
+                row += 1
+                column = 0
+            else:
+                column += 1
+            index += 1
+        return (row, column)
+
+    def _location_to_offset(self, text: str, location: tuple[int, int]) -> int:
+        target_row, target_column = location
+        row = 0
+        column = 0
+        index = 0
+        while index < len(text):
+            if row == target_row and column == target_column:
+                return index
+            char = text[index]
+            if char == "\r":
+                if index + 1 < len(text) and text[index + 1] == "\n":
+                    index += 1
+                row += 1
+                column = 0
+            elif char == "\n":
+                row += 1
+                column = 0
+            else:
+                column += 1
+            index += 1
+        return len(text)
 
     def log_status(self, message: str, *, error: bool = False) -> None:
         pane = self.query_one("#status-pane", VerticalScroll)

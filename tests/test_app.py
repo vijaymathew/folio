@@ -14,7 +14,7 @@ from folio.renderers.base import widget_id_fragment
 from folio.renderers.table import TableEditor
 from folio.ui.document_view import DirectiveInsertEditor, DocumentView
 from folio.ui.app import FolioApp
-from textual.widgets import Button, DataTable, Input, TextArea
+from textual.widgets import Button, DataTable, Input, Static, TextArea
 
 
 async def _find_visible_button(app: FolioApp, pilot, button_id: str) -> Button:
@@ -418,6 +418,60 @@ def test_directive_insert_editor_accepts_typed_input(tmp_path: Path) -> None:
             await pilot.press("H", "i")
             await pilot.pause(0.2)
             assert "Hi" in editor.text
+
+    asyncio.run(scenario())
+
+
+def test_source_find_selects_match_in_source_editor(tmp_path: Path) -> None:
+    doc = tmp_path / "find.folio"
+    doc.write_text("alpha\nSara beta\nSara gamma\n", encoding="utf-8")
+
+    async def scenario() -> None:
+        app = FolioApp(doc)
+        async with app.run_test(size=(140, 45)) as pilot:
+            await pilot.pause(0.2)
+            await pilot.press("f6")
+            await pilot.pause(0.2)
+            source_editor = app.query_one("#source-editor", TextArea)
+            source_editor.focus()
+            await pilot.press("f8")
+            await pilot.pause(0.2)
+            find_input = app.query_one("#source-find-input", Input)
+            assert app.focused is find_input
+            await pilot.press("S", "a", "r", "a")
+            await pilot.pause(0.2)
+            await pilot.press("enter")
+            await pilot.pause(0.2)
+            assert source_editor.selected_text == "Sara"
+            await pilot.press("f3")
+            await pilot.pause(0.2)
+            assert source_editor.selected_text == "Sara"
+            assert app.query_one("#source-find-status", Static).render().plain == "2/2"
+
+    asyncio.run(scenario())
+
+
+def test_source_editor_undo_redo_work_from_app_bindings(tmp_path: Path) -> None:
+    doc = tmp_path / "undo.folio"
+    doc.write_text("abc", encoding="utf-8")
+
+    async def scenario() -> None:
+        app = FolioApp(doc)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause(0.2)
+            await pilot.press("f6")
+            await pilot.pause(0.2)
+            source_editor = app.query_one("#source-editor", TextArea)
+            source_editor.focus()
+            await pilot.press("X")
+            await pilot.pause(0.2)
+            assert source_editor.text == "Xabc"
+            await pilot.press("ctrl+z")
+            await pilot.pause(0.2)
+            assert source_editor.text == "abc"
+            await pilot.press("ctrl+y")
+            await pilot.pause(0.2)
+            assert source_editor.text == "Xabc"
 
     asyncio.run(scenario())
 

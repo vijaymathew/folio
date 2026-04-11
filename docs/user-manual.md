@@ -36,6 +36,9 @@ Keyboard controls:
 - `r`: reload the document from disk
 - `Ctrl+S`: save the current source buffer or inline directive edit, then reparse and rerender
 - `F6`: toggle split-pane / single-pane
+- `F8`: open source find
+- `F3` / `Shift+F3`: next / previous source match
+- `Ctrl+Z` / `Ctrl+Y`: undo / redo in the full source view
 
 Common interactions:
 
@@ -402,7 +405,7 @@ How to use it:
 - press `Ctrl+S` to save, reparse, and restore the widget
 - press `Esc` to cancel the edit session and restore the current widget view
 
-If you want to add new plain text or new directives, switch to split view with `F6` and edit the source pane directly.
+If you want to add new plain text or new directives, switch to split view with `F6` and edit the source pane directly. Use `F8` to open find in the full source view. Some terminal emulators intercept `Ctrl+Shift+F`, so `F8` is the reliable Folio-local shortcut.
 
 ## Safety Notes
 
